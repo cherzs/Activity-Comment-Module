@@ -1,21 +1,37 @@
 /** @odoo-module **/
 
 import { patch } from "@web/core/utils/patch";
-import { MessagingMenu } from "@mail/core/web/messaging_menu";
+import { MessagingMenu } from "@mail/core/public_web/messaging_menu";
 import { useService } from "@web/core/utils/hooks";
 import { _t } from "@web/core/l10n/translation";
 
 patch(MessagingMenu.prototype, {
     setup() {
         this.actionService = useService("action");
-        this.chatWindowService = useService("mail.chat_window");
         this.store = useService("mail.store");
-        this.threadService = useService("mail.thread");
         this.orm = useService("orm");
+        
+        // Only initialize mail-specific services if we're in a private context
+        if (!this.store.inPublicPage) {
+            try {
+                this.threadService = useService("mail.thread");
+                this.chatWindowService = useService("mail.chat_window");
+            } catch (error) {
+                console.warn("Mail services not available:", error);
+                this.threadService = null;
+                this.chatWindowService = null;
+            }
+        }
+        
         super.setup(...arguments);      
     },
 
     get threads() {
+        // If we're in public context or thread service is not available, return empty array
+        if (this.store.inPublicPage || !this.threadService) {
+            return [];
+        }
+
         const threads = super.threads;
         if (!threads) {
             return [];
@@ -30,9 +46,13 @@ patch(MessagingMenu.prototype, {
         });
     },
 
-
     async openDiscussion(thread) {
-        this.markAsRead(thread);
+        if (!thread) return;
+
+        // Only mark as read if we're in private context and thread service is available
+        if (!this.store.inPublicPage && this.threadService) {
+            this.markAsRead(thread);
+        }
 
         let resModel;
         let resId;
@@ -91,11 +111,14 @@ patch(MessagingMenu.prototype, {
                 }
             });
 
-            const chatWindow = this.store.discuss.chatWindows.find(
-                (window) => window.thread?.eq(thread)
-            );
-            if (chatWindow) {
-                this.chatWindowService.close(chatWindow);
+            // Only try to close chat window if we're in a private context and the service is available
+            if (!this.store.inPublicPage && this.chatWindowService && this.store.discuss?.chatWindows) {
+                const chatWindow = this.store.discuss.chatWindows.find(
+                    (window) => window.thread?.eq(thread)
+                );
+                if (chatWindow) {
+                    this.chatWindowService.close(chatWindow);
+                }
             }
             this.close();
 
@@ -103,5 +126,4 @@ patch(MessagingMenu.prototype, {
             console.error("Failed to open discussion:", error);
         }
     }
-
 });

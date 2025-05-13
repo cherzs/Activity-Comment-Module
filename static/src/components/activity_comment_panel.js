@@ -13,7 +13,25 @@ patch(Activity, {
     components: Object.assign({}, Activity.components, { Thread, Composer })
 });
 
-// Patch the prototype to add our functionality
+// First patch the base Activity component to handle mail services
+patch(Activity.prototype, {
+    setup() {
+        super.setup();
+        this.store = useService("mail.store");
+        
+        // Only initialize mail services if we're in a private context
+        if (!this.store.inPublicPage) {
+            try {
+                this.threadService = useService("mail.thread");
+            } catch (error) {
+                console.warn("Mail services not available:", error);
+                this.threadService = null;
+            }
+        }
+    }
+});
+
+// Then patch our specific implementation
 patch(Activity.prototype, {
     setup() {
         super.setup();
@@ -31,12 +49,13 @@ patch(Activity.prototype, {
         });
 
         this.commentRef = useRef('commentPanel');
-        this.threadService = useService("mail.thread");
-        this.store = useService("mail.store");
         this.orm = useService("orm");
 
         onWillStart(async () => {
-            if (this.props.data && this.props.data.id) {
+            if (this.props.data && 
+                this.props.data.id && 
+                !this.store.inPublicPage && 
+                this.threadService) {
                 try {
                     // Check if a thread record exists for this activity
                     const threadRecords = await this.orm.searchRead(
@@ -87,8 +106,6 @@ patch(Activity.prototype, {
 
     toggleComments() {
         this.state.showComments = !this.state.showComments;
-
-
         if (!this.state.showComments) {
             // Get comment count
             if (this.state.thread && this.state.thread.messages) {
@@ -139,7 +156,6 @@ patch(Activity.prototype, {
                     threadInfo.threadModel === 'mail.activity.thread' &&
                     threadInfo.activityId &&
                     threadInfo.activityId === this.props.data.id) {
-
 
                     // Open the comments section
                     if (!this.state.showComments) {
