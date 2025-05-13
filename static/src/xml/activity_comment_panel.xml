@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<templates xml:space="preserve">
+    <!-- <t t-name="activity_comment.ActivityCommentPanel" owl="1">
+        <button t-if="!state.showComments" t-on-click="toggleComments" class="btn btn-light btn-comments">
+            <i class="fa fa-commenting"/>
+            <t t-esc="state.texts.addComment"/>
+        </button>
+        <div t-if="state.showComments" class="o_activity_comment_panel_wrapper">
+            <div class="o_activity_comment_panel">
+                <div class="o_activity_comment_panel_header">
+                    <span class="o_activity_comment_panel_header_title_text">Comments</span>
+                    <button class="btn btn-link o_activity_comment_panel_header_action" t-on-click="toggleComments">
+                        <i class="fa fa-times"/>
+                    </button>
+                </div>
+                <div class="o_activity_comment_panel_body" t-ref="commentRef">
+                    <Thread t-if="state.thread" thread="state.thread" composerClass="Composer"/>
+                </div>
+            </div>
+        </div>
+    </t> -->
+</templates> 
