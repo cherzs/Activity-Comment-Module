@@ -12,61 +12,28 @@ patch(Message, {
     components: Object.assign({}, Message.components, { Thread, Composer })
 });
 
-// First patch the base Message component to handle rpc service
 patch(Message.prototype, {
     setup() {
         super.setup();
-        this.store = useService("mail.store");
-        
-        // Only initialize rpc service if we're in a private context
-        if (!this.store.inPublicPage) {
-            try {
-                this.rpc = useService("rpc");
-            } catch (error) {
-                console.warn("RPC service not available:", error);
-                this.rpc = null;
-            }
-        }
-    }
-});
-
-// Then patch our specific implementation
-patch(Message.prototype, {
-    setup() {
-        super.setup();
-        this.state = useState({
-            showComments: false,
-            thread: null,
-            threadRecord: null,
-            commentCount: 0,
-            texts: {
+        this.state.showComments = false;
+        this.state.thread = null;
+        this.state.threadRecord = null;
+        this.state.commentCount = 0,
+        this.state.texts = {
                 addComment: _t(" Add a Comment"),
                 hideComments: _t(" Hide Comments"),
                 seeComments: _t(" See Comments"),
                 addCommentPlaceholder: _t("Add a Comment...")
-            }
-        });
+            };
 
         this.commentRef = useRef('commentPanel');
-        this.orm = useService("orm");
+        this.rpc = useService("rpc");
+        this.threadService = useService("mail.thread");
         this.store = useService("mail.store");
-
-        // Initialize mail services
-        this.threadService = null;
-        if (!this.store.inPublicPage) {
-            try {
-                this.threadService = useService("mail.thread");
-            } catch (error) {
-                console.warn("Mail services not available:", error);
-            }
-        }
+        this.orm = useService("orm");
 
         onWillStart(async () => {
-            if (!this.threadService) {
-                console.warn("Thread service not available, comments functionality will be disabled");
-                return;
-            }
-
+            // Only process for activity done messages with subtype_id[0] == 3
             if (this.props.message &&
                 this.props.message.subtype_id &&
                 this.props.message.subtype_id[0] === 3 &&
@@ -83,28 +50,31 @@ patch(Message.prototype, {
                     let threadId;
 
                     if (threadRecords.length === 0) {
+                        // Create a new thread record if none exists
+                        // orm.create returns an array of IDs, take the first one
                         const newThreadIds = await this.orm.create('mail.activity.thread', [{
                             activity_done_message_id: this.props.message.id,
                             res_model: this.props.message.model,
                             res_id: this.props.message.res_id,
                         }]);
-                        threadId = newThreadIds[0];
+                        threadId = newThreadIds[0]; // Get the first ID from the returned array
                     } else {
                         threadId = threadRecords[0].id;
                     }
 
-                    if (this.threadService) {
-                        this.state.thread = this.threadService.getThread('mail.activity.thread', threadId);
-                        await this.threadService.loadAround(this.state.thread);
-                        this.state.threadRecord = threadId;
+                    // Get the thread for our custom model
+                    this.state.thread = this.threadService.getThread('mail.activity.thread', threadId);
+                    await this.threadService.loadAround(this.state.thread);
+                    this.state.threadRecord = threadId;
 
-                        if (this.state.thread && this.state.thread.messages) {
-                            const validMessages = this.state.thread.messages.filter(
-                                msg => msg && msg.body && msg.body.trim() !== ''
-                            );
-                            this.state.commentCount = validMessages.length;
-                        }
+                    // Get comment count
+                    if (this.state.thread && this.state.thread.messages) {
+                        const validMessages = this.state.thread.messages.filter(
+                            msg => msg && msg.body && msg.body.trim() !== ''
+                        );
+                        this.state.commentCount = validMessages.length;
                     }
+
                 } catch (error) {
                     console.error("Failed to initialize activity message thread:", error);
                 }
@@ -121,6 +91,7 @@ patch(Message.prototype, {
         this.state.showComments = !this.state.showComments;
 
         if (!this.state.showComments) {
+            // Get comment count
             if (this.state.thread && this.state.thread.messages) {
                 const validMessages = this.state.thread.messages.filter(
                     msg => msg && msg.body && msg.body.trim() !== ''
@@ -142,6 +113,7 @@ patch(Message.prototype, {
 
     _setupMessageListener() {
         if (this.state.thread) {
+            // Create a reaction to track changes to thread messages
             this.threadMessagesReaction = () => {
                 if (this.state.thread && this.state.thread.messages) {
                     const validMessages = this.state.thread.messages.filter(
@@ -151,16 +123,19 @@ patch(Message.prototype, {
                 }
             };
 
+            // Set up initial count
             this.threadMessagesReaction();
         }
     },
 
     _checkSessionStorage() {
         try {
+            // Check if we have stored thread info in session storage
             const storedInfo = sessionStorage.getItem('open_activity_comments');
             if (storedInfo) {
                 const threadInfo = JSON.parse(storedInfo);
 
+                // Check if this is for our message
                 if (threadInfo &&
                     threadInfo.threadModel === 'mail.activity.thread' &&
                     threadInfo.activityDoneMessageId &&
@@ -195,6 +170,7 @@ patch(Message.prototype, {
                         }
                     }
 
+                    // Last resort - just scroll to the comments container
                     if (this.commentRef.el) {
                         this.commentRef.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
                     }
