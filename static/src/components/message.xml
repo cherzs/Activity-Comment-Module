@@ -1,20 +1,33 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <templates xml:space="preserve">
-    <t t-name="mail.Message.Prestaterre" t-inherit="mail.Message" t-inherit-mode="extension">
-        <xpath expr="//div[@class='o-mail-Message-textContent position-relative d-flex']" position="after">
-            <div t-if="props.message.subtype_id and props.message.subtype_id[0] == 3" class="o_activity_comment_panel_wrapper" style="margin-top: 3px; width: 563px;">
-                <span class="o-mail-Activity-comment btn btn-link text-action p-0 me-3"
-                      t-on-click="toggleComments"
+    <t t-name="mail.Message.ActivityComment" t-inherit="mail.Message" t-inherit-mode="extension" owl="1">
+        <xpath expr="//div[hasclass('o_Message_content')]" position="after">
+            <div t-if="messageView.message.subtype_id and messageView.message.subtype_id[0] == 3" class="o_activity_comment_panel_wrapper" style="margin-top: 3px; width: 563px;">
+                <a href="#" role="button" class="o_activity_comment_btn btn btn-link text-action p-0 me-3"
+                      t-on-click="messageView.toggleComments"
                       style="margin-bottom: 8px;">
                     <i class="fa fa-commenting"/>
-                    <t t-esc="getToggleText()"/>
-                </span>
+                    <t t-if="messageView.message.commentModel">
+                        <t t-if="messageView.message.commentModel.showComments">
+                            <t t-esc="' Hide Comments'"/>
+                        </t>
+                        <t t-elif="messageView.message.commentModel.commentCount > 0">
+                            <t t-esc="' See Comments (' + messageView.message.commentModel.commentCount + ')'"/>
+                        </t>
+                        <t t-else="">
+                            <t t-esc="' Add a Comment'"/>
+                        </t>
+                    </t>
+                    <t t-else="">
+                        <t t-esc="' Add a Comment'"/>
+                    </t>
+                </a>
 
-                <div t-if="state.showComments" class="o_activity_comments_container" t-ref="commentPanel" style="background-color: #e7e9ed;">
+                <div t-if="messageView.message.commentModel and messageView.message.commentModel.showComments" class="o_activity_comments_container" t-ref="commentPanel" style="background-color: #e7e9ed;">
                     <!-- Thread with messages -->
-                    <t t-if="state.thread">
+                    <t t-if="messageView.message.commentModel.thread">
                         <Thread
-                            thread="state.thread"
+                            thread="messageView.message.commentModel.thread"
                             order="'asc'"
                             showEmptyMessage="false"
                             showJumpPresent="false"
@@ -22,8 +35,8 @@
                         />
                         <div class="o_activity_comments_composer" style="margin-top: 8px;">
                             <Composer
-                                placeholder="state.texts.addCommentPlaceholder"
-                                composer="state.thread.composer"
+                                placeholder="'Add a Comment...'"
+                                composer="messageView.message.commentModel.thread.composer"
                                 type="'note'"
                                 showFullComposer="false"
                                 mode="'extended'"
