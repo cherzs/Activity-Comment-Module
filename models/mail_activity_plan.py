@@ -3,7 +3,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 import pytz
 from dateutil.rrule import rrulestr
-from odoo.tools import logging
+import logging
 
 _logger = logging.getLogger(__name__)
 

@@ -1,6 +1,6 @@
 # Translation of Odoo Server.
 # This file contains the translation of the following modules:
-# 	* activity_comment
+# 	* Activity-Comment-Module
 #
 msgid ""
 msgstr ""
@@ -16,26 +16,26 @@ msgstr ""
 "Plural-Forms: \n"
 
 
-#. module: activity_comment
+#. module: Activity-Comment-Module
 #. odoo-javascript
-#: code:addons/certification_app/static/src/js/components/activity_comment_panel.js:0
-#: code:addons/certification_app/static/src/js/components/activity_done_comment_panel.js:0
+#: code:addons/Activity-Comment-Module/static/src/components/activity_comment_panel.js:0
+#: code:addons/Activity-Comment-Module/static/src/components/activity_done_comment_panel.js:0
 #, python-format
 msgid " Add a Comment"
 msgstr " Ajouter un commentaire"
 
-#. module: activity_comment
+#. module: Activity-Comment-Module
 #. odoo-javascript
-#: code:addons/certification_app/static/src/js/components/activity_comment_panel.js:0
-#: code:addons/certification_app/static/src/js/components/activity_done_comment_panel.js:0
+#: code:addons/Activity-Comment-Module/static/src/components/activity_comment_panel.js:0
+#: code:addons/Activity-Comment-Module/static/src/components/activity_done_comment_panel.js:0
 #, python-format
 msgid " Hide Comments"
 msgstr " Masquer les commentaires"
 
-#. module: activity_comment
+#. module: Activity-Comment-Module
 #. odoo-javascript
-#: code:addons/certification_app/static/src/js/components/activity_comment_panel.js:0
-#: code:addons/certification_app/static/src/js/components/activity_done_comment_panel.js:0
+#: code:addons/Activity-Comment-Module/static/src/components/activity_comment_panel.js:0
+#: code:addons/Activity-Comment-Module/static/src/components/activity_done_comment_panel.js:0
 #, python-format
 msgid " See Comments"
 msgstr " Voir les commentaires"
