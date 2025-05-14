@@ -5,13 +5,13 @@
             <attribute name="t-att-data-message-id">messageView.message.id</attribute>
         </xpath>
         <xpath expr="//div[hasclass('o_Message_content')]" position="after">
-            <div t-if="messageView.message.subtype_id or 
-                        (messageView.message.model and messageView.message.model.includes('mail.activity')) or 
+            <div t-if="messageView.message.model and messageView.message.model.includes('mail.activity') || 
                         (messageView.message.body and (
                           messageView.message.body.includes('To Do done') || 
                           messageView.message.body.includes('done') || 
                           messageView.message.body.includes('completed') ||
-                          messageView.message.body.includes('To Do')
+                          messageView.message.body.includes('To Do') ||
+                          messageView.message.body.includes('marked as done')
                         ))" 
                   class="o_activity_comment_panel_wrapper mt-2" style="width: 100%;"
                   t-att-data-message-id="messageView.message.id">
