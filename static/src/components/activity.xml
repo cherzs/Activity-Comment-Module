@@ -6,7 +6,7 @@
                   t-att-data-activity-id="activityView.activity.id">
                 <!-- Button to toggle -->
                 <a href="#" role="button" class="o_activity_comment_btn btn btn-link text-primary p-0 mb-2 d-flex align-items-center"
-                      t-on-click="activityView.toggleComments"
+                      t-on-click.prevent="activityView.toggleComments"
                       style="position: relative; z-index: 100; pointer-events: auto;">
                     <i class="fa fa-commenting-o me-1"/>
                     <span>
@@ -25,6 +25,44 @@
                     <!-- Thread with messages (if available) -->
                     <t t-if="activityView.activity.commentModel.thread and activityView.activity.commentModel.thread.messages and activityView.activity.commentModel.thread.messages.length">
                         <div class="o_comment_thread_container border-bottom p-2">
+                            <t t-if="activityView.activity.commentModel.hasLocalOnlyMessages">
+                                <div class="text-warning small text-center mb-2 p-2" style="background-color: #fffbea; border-radius: 4px;">
+                                    <i class="fa fa-info-circle me-1"></i>
+                                    Some comments are saved locally only
+                                    <button t-on-click="activityView.activity.commentModel.retryLocalMessages" 
+                                            class="btn btn-sm btn-warning ms-2 py-0">
+                                        <i class="fa fa-refresh me-1"></i>Retry Sync
+                                    </button>
+                                </div>
+                            </t>
+                            <!-- Manually render messages as fallback -->
+                            <t t-if="activityView.activity.commentModel.thread.messages and activityView.activity.commentModel.thread.messages.length">
+                                <div class="o_mail_thread">
+                                    <t t-foreach="activityView.activity.commentModel.thread.messages" t-as="message" t-key="message.id">
+                                        <div class="o_thread_message d-flex p-2 mb-1" t-att-class="{'o_thread_message_local': message.isLocalOnly}">
+                                            <div class="o_thread_message_avatar me-2">
+                                                <img t-att-src="message.author.avatar" 
+                                                     class="rounded-circle" 
+                                                     style="width: 32px; height: 32px;"/>
+                                            </div>
+                                            <div class="o_thread_message_core flex-grow-1">
+                                                <div class="o_thread_message_header d-flex">
+                                                    <strong class="o_thread_message_author"><t t-esc="message.author.name"/></strong>
+                                                    <small class="o_thread_message_date text-muted ms-2">
+                                                                                                                 <t t-esc="message.date ? message.date.toLocaleString() : ''" />
+                                                    </small>
+                                                    <t t-if="message.isLocalOnly">
+                                                        <span class="badge bg-warning ms-2 text-dark">Local</span>
+                                                    </t>
+                                                </div>
+                                                <div class="o_thread_message_content mt-1">
+                                                    <t t-out="message.body"/>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </t>
+                                </div>
+                            </t>
                             <ThreadView
                                 thread="activityView.activity.commentModel.thread"
                                 order="'asc'"
@@ -36,6 +74,11 @@
                                 displayAvatar="true"
                                 displayComposer="false"
                             />
+                        </div>
+                    </t>
+                    <t t-else="">
+                        <div class="o_comment_thread_container border-bottom p-2">
+                            <p class="text-muted text-center p-2">No comments yet</p>
                         </div>
                     </t>
                     
@@ -80,7 +123,10 @@
                                 <textarea class="o-mail-Composer-input form-control rounded-3 border-light" 
                                         style="min-height: 60px; resize: vertical; background-color: white;"
                                         placeholder="Add a Comment..."
-                                        t-on-input="(ev) => { activityView.activity.commentModel.commentText = ev.target.value }"
+                                        t-on-input="(ev) => { 
+                                            activityView.activity.commentModel.commentText = ev.target.value;
+                                            activityView.activity.commentModel.update({ commentText: ev.target.value });
+                                        }"
                                         t-on-keydown="activityView.activity.commentModel.onKeydownTextarea"
                                         t-on-keyup="activityView.activity.commentModel.onKeyupTextarea"
                                         t-on-focus="activityView.activity.commentModel.onFocusTextarea"
@@ -89,7 +135,7 @@
                             
                             <div class="d-flex mt-2">
                                 <div>
-                                    <button class="btn btn-light text-muted rounded-2 p-2 me-2 border-0" t-on-click="activityView.activity.commentModel.toggleEmoji">
+                                    <button class="btn btn-light text-muted rounded-2 p-2 me-2 border-0" t-on-click="(ev) => activityView.activity.commentModel.toggleEmoji(ev)">
                                         <i class="fa fa-smile-o"/>
                                     </button>
                                     <button class="btn btn-light text-muted rounded-2 p-2 border-0" t-on-click="activityView.activity.commentModel.uploadFile">

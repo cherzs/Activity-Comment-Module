@@ -21,6 +21,7 @@ Comments can be added, resolved, and managed within activities.
             'Activity-Comment-Module/static/src/components/messaging_menu.js',
             'Activity-Comment-Module/static/src/components/activity.xml',
             'Activity-Comment-Module/static/src/components/message.xml',
+            'Activity-Comment-Module/static/src/components/style.css',
         ],
     },
     'sequence': 500,

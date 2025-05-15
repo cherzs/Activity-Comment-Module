@@ -38,6 +38,11 @@ class ActivityThread(models.Model):
                    mail_create_nolog=True)  # Don't log creation
         self = self.with_context(ctx)
 
+        # Check for any temporary IDs and remove them
+        for vals in vals_list:
+            if 'id' in vals and isinstance(vals['id'], int) and vals['id'] < 0:
+                del vals['id']
+                
         records = super().create(vals_list)
         for record in records:
             # Set the name based on the activity
@@ -83,3 +88,52 @@ class ActivityThread(models.Model):
             })
             return thread
         return False
+        
+    def message_post(self, **kwargs):
+        """Overridden message_post to handle activity threads specially
+        
+        This ensures comments are properly attached to the thread
+        and handled correctly for both active activities and done activities.
+        """
+        self.ensure_one()
+        
+        # Add the proper field names to the context to ensure message properties are set correctly
+        context = dict(self.env.context)
+        if self.activity_id:
+            context.update({
+                'mail_activity_thread_id': self.id,
+                'mail_activity_id': self.activity_id.id,
+            })
+        elif self.activity_done_message_id:
+            context.update({
+                'mail_activity_thread_id': self.id,
+                'mail_activity_done_message_id': self.activity_done_message_id.id,
+            })
+            
+        # Add subtype if not specified
+        if 'subtype_xmlid' not in kwargs and 'subtype_id' not in kwargs:
+            kwargs['subtype_xmlid'] = 'mail.mt_note'
+        
+        # Log for diagnostic purposes
+        _logger = self.env.ref('base.logging_backend').sudo()
+        
+        try:
+            # Post with context
+            message = super(ActivityThread, self.with_context(context)).message_post(**kwargs)
+            
+            # Log successful posting
+            _logger.info(
+                f"Successfully posted message to thread {self.id}, message ID: {message.id}",
+                exc_info=True
+            )
+            
+            return message
+            
+        except Exception as e:
+            # Log failure
+            _logger.error(
+                f"Failed to post message to thread {self.id}. Error: {str(e)}",
+                exc_info=True
+            )
+            # Re-raise the exception
+            raise

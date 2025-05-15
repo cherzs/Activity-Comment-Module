@@ -5,13 +5,17 @@ import { attr, many, one } from '@mail/model/model_field';
 import { clear, link } from '@mail/model/model_field_command';
 import { addLink, escapeAndCompactTextContent, parseAndTransform } from '@mail/js/utils';
 import { isEventHandled, markEventHandled } from '@mail/utils/utils';
+import { markup } from '@odoo/owl';
 
 import { escape, sprintf } from '@web/core/utils/strings';
 import { url } from '@web/core/utils/urls';
 import session from "web.session";
 import { makeDeferred } from '@mail/utils/deferred';
 
+// Imported from offline_mode.js
+
 try {
+    // ActivityCommentModel model
     registerModel({
         name: 'ActivityCommentModel',
         recordMethods: {
@@ -193,7 +197,7 @@ try {
             /**
              * Toggle emoji picker
              */
-            toggleEmoji() {
+            toggleEmoji(event) {
                 try {
                     console.log("Toggle emoji picker");
                     // Check if emoji popover is already open
@@ -235,7 +239,12 @@ try {
                     popover.appendChild(emojiGrid);
                     
                     // Position popover near the emoji button
-                    const emojiBtn = event.target.closest('button');
+                    const emojiBtn = event ? event.target.closest('button') : document.querySelector('.o-mail-Composer-input');
+                    if (!emojiBtn) {
+                        console.error("Could not find emoji button or textarea");
+                        return;
+                    }
+                    
                     document.body.appendChild(popover);
                     
                     const btnRect = emojiBtn.getBoundingClientRect();
@@ -244,7 +253,7 @@ try {
                     
                     // Close popover when clicking outside
                     const closePopover = (e) => {
-                        if (!popover.contains(e.target) && e.target !== emojiBtn) {
+                        if (!popover.contains(e.target) && (!emojiBtn || e.target !== emojiBtn)) {
                             popover.remove();
                             document.removeEventListener('click', closePopover);
                         }
@@ -291,25 +300,45 @@ try {
             canPostMessage() {
                 try {
                     // Get direct value from textarea for most accurate test
-                    const textarea = document.querySelector('.o_activity_comment_panel_wrapper textarea');
-                    const textareaHasContent = textarea && textarea.value && textarea.value.trim() !== '';
+                    // Try to find the active textarea - needs to find the one currently visible and in use
+                    const allTextareas = document.querySelectorAll('.o_activity_comment_panel_wrapper textarea');
+                    let hasContent = false;
                     
-                    // Also check property and attachments
+                    // Check all textareas for content
+                    for (const textarea of allTextareas) {
+                        if (textarea && textarea.offsetParent !== null) { // Check if visible
+                            if (textarea.value && textarea.value.trim() !== '') {
+                                hasContent = true;
+                                break;
+                            }
+                        }
+                    }
+                    
+                    // Also check model property and attachments
                     const hasCommentText = this.commentText && this.commentText.trim() !== '';
                     const hasAttachments = this.attachments && this.attachments.length > 0;
                     
+                    // Get the current element the user is typing in
+                    const activeElement = document.activeElement;
+                    const activeElementHasContent = activeElement && 
+                                                  activeElement.tagName === 'TEXTAREA' && 
+                                                  activeElement.value && 
+                                                  activeElement.value.trim() !== '';
+                    
                     // Log for debugging
                     console.log("canPostMessage check:", { 
-                        textareaHasContent, 
+                        hasContent, 
                         hasCommentText, 
                         hasAttachments,
-                        textareaValue: textarea ? textarea.value : null
+                        activeElementHasContent,
+                        activeElementValue: activeElement && activeElement.tagName === 'TEXTAREA' ? activeElement.value : null
                     });
                     
-                    return textareaHasContent || hasCommentText || hasAttachments;
+                    // Return true if any of these conditions are met
+                    return hasContent || hasCommentText || hasAttachments || activeElementHasContent;
                 } catch (error) {
                     console.error("Error in canPostMessage:", error);
-                    return false;
+                    return true; // Default to allowing submission if there's an error checking
                 }
             },
             
@@ -558,6 +587,59 @@ try {
                     alert("An error occurred while submitting your comment. Please try again.");
                 }
             },
+            
+            // Add method to manually retry sending messages
+            async retryLocalMessages() {
+                try {
+                    // Find all local messages for this thread
+                    if (this.thread && this.thread.messages) {
+                        const localMessages = this.thread.messages.filter(msg => msg.isLocalOnly);
+                        
+                        if (localMessages.length === 0) {
+                            console.log("No local messages to retry");
+                            return;
+                        }
+                        
+                        if (!isOnline()) {
+                            alert("You're currently offline. Messages will be synchronized when your connection is restored.");
+                            return;
+                        }
+                        
+                        let syncCount = 0;
+                        for (const message of localMessages) {
+                            try {
+                                // Try to send the message to the server
+                                if (this.env && this.env.services && this.env.services.rpc) {
+                                    await this.env.services.rpc('/mail/thread/post', {
+                                        thread_model: 'mail.activity.thread',
+                                        thread_id: this.thread.id,
+                                        body: message.body,
+                                        subtype_xmlid: 'mail.mt_note',
+                                    });
+                                    
+                                    // Mark as synced
+                                    message.isLocalOnly = false;
+                                    syncCount++;
+                                }
+                            } catch (error) {
+                                console.error("Failed to sync message:", error);
+                            }
+                        }
+                        
+                        if (syncCount > 0) {
+                            // Update UI to reflect changes
+                            this.update({ hasLocalOnlyMessages: localMessages.length > syncCount });
+                            
+                            // Show success message
+                            alert(`Successfully synchronized ${syncCount} of ${localMessages.length} messages.`);
+                        } else {
+                            alert("Failed to synchronize messages. Please try again later.");
+                        }
+                    }
+                } catch (error) {
+                    console.error("Error in retryLocalMessages:", error);
+                }
+            },
         },
         fields: {
             activity: one('Activity', {
@@ -589,6 +671,16 @@ try {
                     return Boolean(this.attachments && this.attachments.length > 0);
                 },
                 default: false,
+            }),
+            hasLocalOnlyMessages: attr({
+                default: false,
+            }),
+            pendingMessageCount: attr({
+                compute() {
+                    if (!this.thread || !this.thread.messages) return 0;
+                    return this.thread.messages.filter(msg => msg.isLocalOnly).length;
+                },
+                default: 0,
             }),
         },
     });
@@ -708,10 +800,38 @@ try {
          * @returns {boolean}
          */
         canPostMessage() {
-            return (
-                (this.commentText && this.commentText.trim() !== '') || 
-                (this.attachments && this.attachments.length > 0)
-            );
+            try {
+                // Try to find the active textarea - check all visible textareas
+                const allTextareas = document.querySelectorAll('.o_activity_comment_panel_wrapper textarea');
+                let hasContent = false;
+                
+                // Check all textareas for content
+                for (const textarea of allTextareas) {
+                    if (textarea && textarea.offsetParent !== null) { // Check if visible
+                        if (textarea.value && textarea.value.trim() !== '') {
+                            hasContent = true;
+                            break;
+                        }
+                    }
+                }
+                
+                // Also check model property and attachments
+                const hasCommentText = this.commentText && this.commentText.trim() !== '';
+                const hasAttachments = this.attachments && this.attachments.length > 0;
+                
+                // Get the current element the user is typing in
+                const activeElement = document.activeElement;
+                const activeElementHasContent = activeElement && 
+                                              activeElement.tagName === 'TEXTAREA' && 
+                                              activeElement.value && 
+                                              activeElement.value.trim() !== '';
+                
+                // Return true if any of these conditions are met
+                return hasContent || hasCommentText || hasAttachments || activeElementHasContent;
+            } catch (error) {
+                console.error("Error in message canPostMessage:", error);
+                return true; // Default to allowing submission if there's an error checking
+            }
         },
             
             /**
@@ -788,12 +908,28 @@ try {
                         // If thread doesn't exist, initialize it first
                         if (!this.thread && messageView._initializeCommentThread) {
                             // Initialize thread and then submit
-                            messageView._initializeCommentThread().then(() => {
-                                if (this.thread) {
+                            messageView._initializeCommentThread().then((thread) => {
+                                console.log("Thread after init:", thread);
+                                // Update this model's thread reference with the result
+                                if (thread && !this.thread) {
+                                    this.update({ thread: thread });
+                                }
+                                
+                                if (this.thread || thread) {
                                     messageView._submitComment();
                                 } else {
-                                    console.error("Thread initialization failed");
-                                    alert("Cannot submit comment: failed to initialize thread. Please try again or contact your administrator.");
+                                    console.error("Thread initialization failed, trying alternative approach");
+                                    // Last attempt: try to create a temporary thread object
+                                    const tempThread = {
+                                        id: -Math.floor(Math.random() * 10000),
+                                        model: 'mail.activity.thread',
+                                        messages: []
+                                    };
+                                    this.update({ thread: tempThread });
+                                    
+                                    setTimeout(() => {
+                                        messageView._submitComment();
+                                    }, 100);
                                 }
                             }).catch(error => {
                                 console.error("Error initializing thread:", error);
@@ -868,7 +1004,7 @@ try {
             /**
              * Toggle emoji picker
              */
-            toggleEmoji() {
+            toggleEmoji(event) {
                 try {
                     console.log("Toggle emoji picker");
                     // Check if emoji popover is already open
@@ -910,7 +1046,12 @@ try {
                     popover.appendChild(emojiGrid);
                     
                     // Position popover near the emoji button
-                    const emojiBtn = event.target.closest('button');
+                    const emojiBtn = event ? event.target.closest('button') : document.querySelector('.o-mail-Composer-input');
+                    if (!emojiBtn) {
+                        console.error("Could not find emoji button or textarea");
+                        return;
+                    }
+                    
                     document.body.appendChild(popover);
                     
                     const btnRect = emojiBtn.getBoundingClientRect();
@@ -919,7 +1060,7 @@ try {
                     
                     // Close popover when clicking outside
                     const closePopover = (e) => {
-                        if (!popover.contains(e.target) && e.target !== emojiBtn) {
+                        if (!popover.contains(e.target) && (!emojiBtn || e.target !== emojiBtn)) {
                             popover.remove();
                             document.removeEventListener('click', closePopover);
                         }
@@ -1119,6 +1260,9 @@ try {
             },
             default: false,
         }),
+        hasLocalOnlyMessages: attr({
+            default: false,
+        }),
     },
     });
 
@@ -1150,6 +1294,7 @@ try {
         },
     });
 
+    // ComposerView model
     registerPatch({
         name: 'ComposerView',
         recordMethods: {
@@ -1214,7 +1359,7 @@ try {
              */
             async _submitCommentWithAttachments() {
                 try {
-                    console.log("_submitCommentWithAttachments called");
+                    console.log("ActivityView _submitCommentWithAttachments called");
                     // Ensure services are available
                     this._ensureServices();
                     
@@ -1224,7 +1369,7 @@ try {
                         return;
                     }
                     
-                    // Get the comment text directly from textarea for accuracy
+                    // Get the comment text directly from textarea
                     const textarea = document.querySelector('.o_activity_comment_panel_wrapper textarea');
                     const commentText = textarea ? textarea.value.trim() : '';
                     
@@ -1240,60 +1385,197 @@ try {
                     console.log("Can post message:", canPost, "comment text:", commentText);
                     
                     if (!canPost) {
-                        alert("Please enter a comment or add attachments before submitting");
+                        alert("Please enter a comment before submitting");
                         return;
                     }
                     
-                    // This is a simplified approach for now - save locally for UI display
-                    // In a real implementation, this would connect to the Odoo backend
-                    
-                    // Create a mock message
-                    const mockMessage = {
-                        id: -Math.floor(Math.random() * 10000),
-                        body: commentText,
-                        date: new Date(),
-                        author: {
-                            id: 1,
-                            name: "Current User",
-                            avatar: "/web/image?model=res.users&field=avatar_128&id=1"
-                        }
-                    };
-                    
-                    // Try to get or create the thread
-                    if (!this.activity.commentModel.thread) {
-                        const tempThread = {
-                            id: -Math.floor(Math.random() * 10000),
-                            model: 'mail.activity.thread',
-                            messages: [mockMessage]
-                        };
-                        this.activity.commentModel.update({ thread: tempThread });
-                    } else {
-                        // Add message to existing thread
-                        const thread = this.activity.commentModel.thread;
-                        const messages = thread.messages || [];
-                        if (Array.isArray(messages)) {
-                            messages.push(mockMessage);
-                        } else {
-                            console.warn("Thread messages property is not an array");
-                        }
+                    // Ensure thread is properly initialized
+                    if (!this.activity.commentModel.thread || !this.activity.commentModel.thread.id) {
+                        console.log("Thread not properly initialized, attempting to initialize now");
+                        await this._initializeCommentThread();
                     }
                     
-                    // Success! Clear the textarea
-                    if (textarea) {
-                        textarea.value = '';
-                    }
+                    // Try to use standard Odoo posting mechanisms first
+                    let success = false;
+                    let error = null;
+                    const threadId = this.activity.commentModel.thread?.id || -Math.floor(Math.random() * 10000);
+                    const attachments = this.activity.commentModel.attachments || [];
                     
-                    // Clear commentText in the model
-                    this.activity.commentModel.update({
-                        commentText: ''
+                    console.log(`Attempting to save activity comment to thread: ${threadId}, model: mail.activity.thread, text: "${commentText.substring(0, 30)}..."`);
+                    
+                    // Log diagnostics about the thread and environment
+                    console.log("Thread diagnostics:", {
+                        threadId: threadId,
+                        threadModel: 'mail.activity.thread',
+                        activityId: this.activity.id,
+                        hasMessagingService: !!this.env?.services?.messaging,
+                        hasRpcService: !!this.env?.services?.rpc,
+                        commentText: commentText.substring(0, 30) + (commentText.length > 30 ? '...' : '')
                     });
                     
-                    // Update count
-                    this._updateCommentCount();
+                    // Method 1: Use Odoo's mail.thread message_post method - Most reliable for database storage
+                    try {
+                        if (this.env?.services?.rpc) {
+                            console.log("Trying mail.thread message_post method");
+                            const messagePostResult = await this.env.services.rpc({
+                                model: 'mail.activity.thread',
+                                method: 'message_post',
+                                args: [[threadId]],
+                                kwargs: {
+                                    body: commentText,
+                                    message_type: 'comment',
+                                    subtype_xmlid: 'mail.mt_note',
+                                    attachment_ids: attachments.map(a => a.id || 0),
+                                    // Add context fields to ensure proper relationship tracking
+                                    context: {
+                                        'mail_activity_thread_id': threadId,
+                                        'mail_activity_id': this.activity.id,
+                                        'res_model': this.activity.res_model,
+                                        'res_id': this.activity.res_id
+                                    }
+                                }
+                            });
+                            console.log("message_post result:", messagePostResult);
+                            success = true;
+                            console.log("Successfully posted activity comment using message_post");
+                        }
+                    } catch (err) {
+                        console.error("Error using message_post for activity:", err);
+                        error = err;
+                    }
                     
-                    // Show success message only during development
-                    console.log("Comment posted successfully (local mode)");
-                                        
+                    // Method 2: Try using messaging service post method if message_post fails
+                    if (!success && this.env?.services?.messaging?.post) {
+                        try {
+                            console.log("Trying messaging.post method for activity");
+                            await this.env.services.messaging.post({
+                                threadId: threadId,
+                                threadModel: 'mail.activity.thread',
+                                body: commentText,
+                                isNote: true,
+                                attachmentIds: attachments.map(a => a.id || 0),
+                                // Add information about the activity for better thread linking
+                                activity_id: this.activity.id,
+                                res_model: this.activity.res_model,
+                                res_id: this.activity.res_id,
+                            });
+                            success = true;
+                            console.log("Successfully posted activity comment using messaging.post");
+                        } catch (err) {
+                            console.error("Error using messaging.post for activity:", err);
+                            error = err;
+                        }
+                    }
+                    
+                    // Method 3: Try direct ORM create if other methods fail
+                    if (!success && this.orm) {
+                        try {
+                            console.log("Trying direct message creation through ORM");
+                            const messageValues = {
+                                model: 'mail.activity.thread',
+                                res_id: threadId,
+                                record_name: `Activity #${this.activity.id}`,
+                                body: commentText,
+                                message_type: 'comment',
+                                subtype_id: 1,  // Note subtype
+                                author_id: this.env.services.user.partnerId,
+                                // Additional fields for tracking
+                                activity_ids: [[4, this.activity.id, false]], // Link to the activity using 4 command (add to m2m)
+                            };
+                            const messageId = await this.orm.create('mail.message', [messageValues]);
+                            console.log("Created message through ORM, ID:", messageId);
+                            success = true;
+                        } catch (err) {
+                            console.error("Error creating message through ORM:", err);
+                            error = err;
+                        }
+                    }
+                    
+                    if (success) {
+                        // Success! Clear the textarea
+                        if (textarea) {
+                            textarea.value = '';
+                        }
+                        
+                        // Clear commentText in the model
+                        this.activity.commentModel.update({
+                            commentText: ''
+                        });
+                        
+                        // Update count
+                        this._updateCommentCount();
+                        
+                        console.log("Activity comment saved successfully");
+                    } else {
+                        // If all methods failed, create a local-only message
+                        console.error("All activity comment submission methods failed", error);
+                        
+                        // Create a user-friendly message object for local display
+                        const currentUser = {
+                            id: this.env.services.user.userId || 1,
+                            name: this.env.services.user.name || "Current User",
+                            avatar: `/web/image?model=res.users&field=avatar_128&id=${this.env.services.user.userId || 1}`
+                        };
+                        
+                        // Create a local-only message
+                        const localMessage = {
+                            id: -Math.floor(Math.random() * 10000),
+                            body: commentText,
+                            date: new Date(),
+                            author: currentUser,
+                            isLocalOnly: true
+                        };
+                        
+                        // Add message to thread
+                        if (!this.activity.commentModel.thread) {
+                            const tempThread = {
+                                id: -Math.floor(Math.random() * 10000),
+                                model: 'mail.activity.thread',
+                                messages: [localMessage]
+                            };
+                            this.activity.commentModel.update({ 
+                                thread: tempThread,
+                                hasLocalOnlyMessages: true
+                            });
+                        } else {
+                            const thread = this.activity.commentModel.thread;
+                            const messages = thread.messages || [];
+                            if (Array.isArray(messages)) {
+                                messages.push(localMessage);
+                                this.activity.commentModel.update({ hasLocalOnlyMessages: true });
+                            }
+                        }
+                        
+                        // Clear textarea
+                        if (textarea) {
+                            textarea.value = '';
+                        }
+                        
+                        // Clear commentText in model
+                        this.activity.commentModel.update({
+                            commentText: ''
+                        });
+                        
+                        // Update count
+                        this._updateCommentCount();
+                        
+                        // Visual indicator for local-only status (non-intrusive)
+                        setTimeout(() => {
+                            const localMsgElements = document.querySelectorAll('.o_thread_message_local');
+                            if (localMsgElements && localMsgElements.length > 0) {
+                                // Highlight the most recent local message with a subtle animation
+                                const latestMsg = localMsgElements[localMsgElements.length - 1];
+                                latestMsg.style.transition = 'background-color 0.5s ease';
+                                latestMsg.style.backgroundColor = '#fffde7';
+                                setTimeout(() => {
+                                    latestMsg.style.backgroundColor = '';
+                                }, 1500);
+                            }
+                        }, 100);
+                        
+                        // Try to save in background
+                        this._retryCommentInBackground(commentText, threadId);
+                    }
                 } catch (error) {
                     console.error("Error submitting comment:", error);
                     alert("An error occurred while submitting your comment. Please try again.");
@@ -1301,11 +1583,243 @@ try {
             },
             
             /**
-             * Submit the comment to the thread
-             * @deprecated Use _submitCommentWithAttachments instead
+             * Try to save a comment in the background
+             * @param {string} commentText The text of the comment
+             * @param {number} threadId The ID of the thread
              */
-            async _submitComment() {
-                return this._submitCommentWithAttachments();
+            async _retryCommentInBackground(commentText, threadId) {
+                try {
+                    console.log("Attempting to save comment in background");
+                    
+                    // Create a more robust retry mechanism
+                    const maxRetries = 5;
+                    const initialWaitTime = 2000; // 2 seconds
+                    
+                    const performRetry = async (attempt = 1, waitTime = initialWaitTime) => {
+                        // Stop if too many attempts
+                        if (attempt > maxRetries) {
+                            console.error(`Giving up after ${maxRetries} attempts to save comment`);
+                            return false;
+                        }
+                        
+                        // Check if we're online before trying
+                        const isOnline = window.navigator.onLine;
+                        if (!isOnline) {
+                            console.log("Currently offline, will retry when online");
+                            // Setup online event listener to retry when connection is restored
+                            const retryWhenOnline = () => {
+                                window.removeEventListener('online', retryWhenOnline);
+                                // Wait a bit after coming online before retrying
+                                setTimeout(() => performRetry(attempt), 2000);
+                            };
+                            window.addEventListener('online', retryWhenOnline);
+                            return false;
+                        }
+                        
+                        // Wait before trying
+                        await new Promise(resolve => setTimeout(resolve, waitTime));
+                        
+                        // If thread ID is negative, we need to create a proper thread first
+                        try {
+                            // Only try to create a new thread if we have a negative ID and orm service
+                            if (threadId < 0 && this.orm) {
+                                console.log("Attempting to create a proper thread before message posting");
+                                let realThreadId;
+                                
+                                try {
+                                    // Create a real thread
+                                    const threadValues = {
+                                        activity_id: this.activity.id,
+                                        res_model: this.activity.res_model || 'res.partner',
+                                        res_id: this.activity.res_id || '0',
+                                    };
+                                    
+                                    const newThreadIds = await this.orm.create('mail.activity.thread', [threadValues]);
+                                    realThreadId = newThreadIds[0];
+                                    console.log("Created real thread with ID:", realThreadId);
+                                    
+                                    // Update our threadId to use the real one
+                                    threadId = realThreadId;
+                                    
+                                    // Update thread in model
+                                    if (this.activity.commentModel.thread) {
+                                        const updatedThread = {...this.activity.commentModel.thread, id: realThreadId};
+                                        this.activity.commentModel.update({ thread: updatedThread });
+                                    }
+                                } catch (threadError) {
+                                    console.error("Failed to create real thread:", threadError);
+                                    // Continue with negative ID, hoping a thread gets created automatically
+                                }
+                            }
+                        } catch (threadCreationError) {
+                            console.error("Error while trying to create a real thread:", threadCreationError);
+                            // Continue with retry using existing threadId
+                        }
+                        
+                        // Try to save using mail.thread's message_post
+                        try {
+                            if (this.env?.services?.rpc) {
+                                // Get context information based on component type
+                                let context = {
+                                    'mail_activity_thread_id': threadId
+                                };
+                                
+                                if (this.message) {
+                                    // MessageView context
+                                    context.mail_activity_done_message_id = this.message.id;
+                                    context.res_model = this.message.model || 'mail.message';
+                                    context.res_id = this.message.res_id || 0;
+                                } else if (this.activity) {
+                                    // ActivityView context 
+                                    context.mail_activity_id = this.activity.id;
+                                    context.res_model = this.activity.res_model;
+                                    context.res_id = this.activity.res_id;
+                                }
+                                
+                                // Try using message_post method (preferred)
+                                console.log(`Background save (attempt ${attempt}): Using message_post method`);
+                                try {
+                                    const messagePostResult = await this.env.services.rpc({
+                                        model: 'mail.activity.thread',
+                                        method: 'message_post',
+                                        args: [[threadId]],
+                                        kwargs: {
+                                            body: commentText,
+                                            message_type: 'comment',
+                                            subtype_xmlid: 'mail.mt_note',
+                                            context: context
+                                        }
+                                    }, {
+                                        silent: true,     // Don't show error popups
+                                        shadow: true,     // Don't block UI
+                                        timeout: 10000    // 10 second timeout
+                                    });
+                                    
+                                    console.log("Background save result:", messagePostResult);
+                                    
+                                    // Update UI to reflect successful save
+                                    this._updateLocalMessageStatus(messagePostResult);
+                                    
+                                    return true;
+                                } catch (rpcError) {
+                                    console.warn(`RPC failed on attempt ${attempt}:`, rpcError);
+                                    
+                                    // Check error type to determine if we should retry
+                                    if (rpcError.name === 'ConnectionLostError' || 
+                                        !window.navigator.onLine ||
+                                        rpcError.message?.includes('network') ||
+                                        rpcError.message?.includes('timeout')) {
+                                        
+                                        console.log(`Network error on attempt ${attempt}, will retry in ${waitTime*2/1000} seconds`);
+                                        // Exponential backoff - double the wait time
+                                        return performRetry(attempt + 1, waitTime * 2);
+                                    }
+                                    
+                                    // For other errors, try fallback methods
+                                    throw rpcError;
+                                }
+                            }
+                        } catch (err) {
+                            // Try with direct ORM create if message_post fails
+                            try {
+                                if (this.orm) {
+                                    console.log(`Background save (attempt ${attempt}): Trying direct ORM create`);
+                                    // Build message values
+                                    const messageValues = {
+                                        model: 'mail.activity.thread',
+                                        res_id: threadId,
+                                        body: commentText,
+                                        message_type: 'comment',
+                                        subtype_id: 1, // Note subtype
+                                    };
+                                    
+                                    // Add related fields based on context
+                                    if (this.message) {
+                                        messageValues.activity_done_message_id = this.message.id;
+                                    } else if (this.activity) {
+                                        messageValues.activity_ids = [[4, this.activity.id, false]];
+                                    }
+                                    
+                                    const messageId = await this.orm.create('mail.message', [messageValues]);
+                                    console.log(`Background save (attempt ${attempt}): Created message through ORM, ID:`, messageId);
+                                    
+                                    // Update UI to reflect successful save
+                                    this._updateLocalMessageStatus(messageId);
+                                    
+                                    return true;
+                                }
+                            } catch (ormError) {
+                                console.error(`Background save ORM fallback failed on attempt ${attempt}:`, ormError);
+                                
+                                // Check if this is a network error that we should retry
+                                if (ormError.name === 'ConnectionLostError' || 
+                                    !window.navigator.onLine ||
+                                    ormError.message?.includes('network') ||
+                                    ormError.message?.includes('timeout')) {
+                                    
+                                    console.log(`Network error on ORM fallback attempt ${attempt}, will retry in ${waitTime*2/1000} seconds`);
+                                    // Exponential backoff - double the wait time
+                                    return performRetry(attempt + 1, waitTime * 2);
+                                }
+                            }
+                        }
+                        
+                        // If we got here, none of the methods worked but it wasn't a network error
+                        // Try one more time with increased wait
+                        if (attempt < maxRetries) {
+                            console.log(`All methods failed on attempt ${attempt}, will retry once more`);
+                            return performRetry(attempt + 1, waitTime * 2);
+                        }
+                        
+                        return false;
+                    };
+                    
+                    // Start the retry process
+                    return performRetry();
+                    
+                } catch (error) {
+                    console.error("Error in background save:", error);
+                    return false;
+                }
+            },
+            
+            /**
+             * Update local message status after successful background save
+             * @param {number|object} messageIdOrResult The message ID or result object
+             */
+            _updateLocalMessageStatus(messageIdOrResult) {
+                try {
+                    // Get message ID from result
+                    const messageId = typeof messageIdOrResult === 'number' ? 
+                        messageIdOrResult : 
+                        (messageIdOrResult.id || messageIdOrResult);
+                    
+                    // Get the correct comment model based on context
+                    const commentModel = this.message ? 
+                        this.message.commentModel : 
+                        (this.activity ? this.activity.commentModel : null);
+                        
+                    if (commentModel && commentModel.thread && commentModel.thread.messages) {
+                        const messages = commentModel.thread.messages;
+                        const localMessages = messages.filter(msg => msg.isLocalOnly);
+                        
+                        if (localMessages.length > 0) {
+                            // Update the first local message with the server ID
+                            localMessages[0].isLocalOnly = false;
+                            localMessages[0].id = messageId;
+                            
+                            // Update the hasLocalOnlyMessages flag based on remaining local messages
+                            const stillHasLocal = messages.some(msg => msg.isLocalOnly);
+                            commentModel.update({
+                                hasLocalOnlyMessages: stillHasLocal
+                            });
+                            
+                            console.log("Local message updated to synced status");
+                        }
+                    }
+                } catch (error) {
+                    console.error("Error updating local message status:", error);
+                }
             },
             
             /**
@@ -1317,121 +1831,104 @@ try {
                     this._ensureServices();
                     
                     if (!this.activity || !this.activity.id) {
-                        return;
+                        return null;
                     }
                     
-                    // Check if thread already exists
-                    if (!this.activity.commentModel.thread) {
-                        // Basic thread creation if component method not available
-                        try {
-                            // Get ORM service, either from this.orm or this.env.services
-                            const orm = this.orm;
-                            
-                            if (!orm) {
-                                console.warn("ORM service not available, creating temporary thread");
-                                // Fallback: create a temporary thread object locally
-                                if (this.env && this.env.messaging && this.env.messaging.models && this.env.messaging.models['Thread']) {
-                                    const Thread = this.env.messaging.models['Thread'];
-                                    const tempThreadId = -Math.floor(Math.random() * 10000);
-                                    
-                                    const thread = Thread.create({
-                                        id: tempThreadId,
-                                        model: 'mail.activity.thread',
-                                        name: 'Temporary Thread',
-                                        isTemporary: true,
-                                    });
-                                    
-                                    if (thread) {
-                                        this.activity.commentModel.update({ 
-                                            thread: thread,
-                                            showComments: true
-                                        });
-                                        return thread;
-                                    }
-                                } else if (window.odoo && window.odoo.define) {
-                                    // Try an alternative approach using Odoo's define
-                                    const tempThreadId = -Math.floor(Math.random() * 10000);
-                                    const thread = {
-                                        id: tempThreadId,
-                                        model: 'mail.activity.thread',
-                                        name: 'Temporary Thread',
-                                        isTemporary: true,
-                                        messages: []
-                                    };
-                                    
-                                    this.activity.commentModel.update({ 
-                                        thread: thread,
-                                        showComments: true
-                                    });
-                                    return thread;
-                                }
-                                return null;
-                            }
-                            
-                            // Search for existing thread
-                            console.log("Searching for thread with activity_id:", this.activity.id);
-                            const threadRecords = await orm.searchRead(
-                                'mail.activity.thread',
-                                [['activity_id', '=', this.activity.id]],
-                                ['id', 'res_model', 'res_id']
-                            );
-                            
-                            let threadId;
-                            if (threadRecords.length === 0) {
-                                // Create thread if doesn't exist
-                                console.log("Creating new thread for activity:", this.activity.id);
-                                const threadValues = {
-                                    activity_id: this.activity.id,
-                                    res_model: this.activity.res_model || 'res.partner',
-                                    res_id: this.activity.res_id || '0',
-                                };
-                                console.log("Thread values:", threadValues);
-                                
-                                const newThreadIds = await orm.create('mail.activity.thread', [threadValues]);
-                                threadId = newThreadIds[0];
-                                console.log("Created thread with ID:", threadId);
-                            } else {
-                                threadId = threadRecords[0].id;
-                                console.log("Found existing thread:", threadId);
-                            }
-                            
-                            // Try to find or create thread in models
-                            if (this.env && this.env.messaging && this.env.messaging.models && this.env.messaging.models['Thread']) {
-                                const Thread = this.env.messaging.models['Thread'];
-                                
-                                // Check if thread exists
-                                let thread = Thread.all().find(t => t.id === threadId && t.model === 'mail.activity.thread');
-                                
-                                // Create thread if it doesn't exist
-                                if (!thread) {
-                                    thread = Thread.create({
-                                        id: threadId,
-                                        model: 'mail.activity.thread',
-                                    });
-                                }
-                                
-                                // Update activity comment model
-                                if (thread) {
-                                    this.activity.commentModel.update({ thread: thread });
-                                    return thread;
-                                }
-                            } else {
-                                // Create a simple thread object if models aren't available
-                                const thread = {
-                                    id: threadId,
-                                    model: 'mail.activity.thread',
-                                    messages: []
-                                };
-                                this.activity.commentModel.update({ thread: thread });
-                                return thread;
-                            }
-                        } catch (e) {
-                            console.error("Error creating thread in base model:", e);
-                            return null;
+                    // Return existing thread if it's already initialized
+                    if (this.activity.commentModel.thread) {
+                        // Check if this thread is a temporary one (negative ID)
+                        if (this.activity.commentModel.thread.id < 0) {
+                            console.log("Found temporary thread - will create real one on server");
+                        } else {
+                            // Real thread already exists
+                            return this.activity.commentModel.thread;
                         }
                     }
                     
-                    return this.activity.commentModel.thread;
+                    // Basic thread creation if component method not available
+                    try {
+                        // Get ORM service, either from this.orm or this.env.services
+                        const orm = this.orm;
+                        
+                        if (!orm) {
+                            console.warn("ORM service not available, creating temporary thread");
+                            // Fallback: create a temporary thread object locally
+                            const tempThreadId = -Math.floor(Math.random() * 10000);
+                            const tempThread = {
+                                id: tempThreadId,
+                                model: 'mail.activity.thread',
+                                name: 'Temporary Thread',
+                                isTemporary: true,
+                                messages: []
+                            };
+                            
+                            // Update the commentModel with the new thread
+                            this.activity.commentModel.update({ 
+                                thread: tempThread,
+                                showComments: true
+                            });
+                            
+                            return tempThread;
+                        }
+                        
+                        // Search for existing thread
+                        console.log("Searching for thread with activity_id:", this.activity.id);
+                        const threadRecords = await orm.searchRead(
+                            'mail.activity.thread',
+                            [['activity_id', '=', this.activity.id]],
+                            ['id', 'res_model', 'res_id']
+                        );
+                        
+                        let threadId;
+                        if (threadRecords.length === 0) {
+                            // Create thread if doesn't exist
+                            console.log("Creating new thread for activity:", this.activity.id);
+                            const threadValues = {
+                                activity_id: this.activity.id,
+                                res_model: this.activity.res_model || 'res.partner',
+                                res_id: this.activity.res_id || '0',
+                            };
+                            console.log("Thread values:", threadValues);
+                            
+                            try {
+                                const newThreadIds = await orm.create('mail.activity.thread', [threadValues]);
+                                threadId = newThreadIds[0];
+                                console.log("Created thread with ID:", threadId);
+                            } catch (createError) {
+                                console.error("Error creating thread:", createError);
+                                // Try simpler direct creation as fallback
+                                const simpleValues = {
+                                    activity_id: this.activity.id
+                                };
+                                try {
+                                    const fallbackIds = await orm.create('mail.activity.thread', [simpleValues]);
+                                    threadId = fallbackIds[0];
+                                    console.log("Created thread with simplified values, ID:", threadId);
+                                } catch (e) {
+                                    console.error("Even simplified thread creation failed:", e);
+                                    throw e;
+                                }
+                            }
+                        } else {
+                            threadId = threadRecords[0].id;
+                            console.log("Found existing thread:", threadId);
+                        }
+                        
+                        // Create a thread object with the ID
+                        const thread = {
+                            id: threadId,
+                            model: 'mail.activity.thread',
+                            messages: []
+                        };
+                        
+                        // Update the commentModel with the new thread
+                        this.activity.commentModel.update({ thread: thread });
+                        
+                        return thread;
+                    } catch (e) {
+                        console.error("Error creating thread in base model:", e);
+                        return null;
+                    }
                 } catch (error) {
                     console.error("Failed to initialize activity thread:", error);
                     return null;
@@ -1459,12 +1956,28 @@ try {
                             // Update count when closing
                             this._updateCommentCount();
                         } else {
-                            // If panel closed, show it
-                            this.activity.commentModel.update({
-                                showComments: true
-                            });
+                            // Create a temporary empty thread if one doesn't exist yet
+                            // This ensures the "No comments yet" message shows immediately
+                            if (!this.activity.commentModel.thread) {
+                                const tempThread = {
+                                    id: -Math.floor(Math.random() * 10000),
+                                    model: 'mail.activity.thread',
+                                    name: 'Temporary Thread',
+                                    isTemporary: true,
+                                    messages: []
+                                };
+                                this.activity.commentModel.update({ 
+                                    thread: tempThread,
+                                    showComments: true
+                                });
+                            } else {
+                                // If panel closed, show it
+                                this.activity.commentModel.update({
+                                    showComments: true
+                                });
+                            }
                             
-                            // Initialize thread if needed
+                            // Initialize thread if needed (in background)
                             this._initializeCommentThread();
                             
                             // Focus the textarea
@@ -1745,98 +2258,490 @@ try {
                         return;
                     }
                     
-                    // Get the comment text from textarea
                     const textarea = document.querySelector('.o_activity_comment_panel_wrapper textarea');
                     const commentText = textarea ? textarea.value.trim() : '';
                     const threadId = this.message.commentModel.thread.id;
-                    const attachments = this.message.commentModel.attachments || [];
                     
-                    // Try to use standard Odoo posting mechanisms
+                    console.log(`Attempting to save comment to thread: ${threadId}, model: mail.activity.thread, text: "${commentText.substring(0, 30)}..."`);
+                    
+                    // Log diagnostics about the thread and environment
+                    console.log("Message thread diagnostics:", {
+                        threadId: threadId,
+                        threadModel: 'mail.activity.thread',
+                        messageId: this.message.id,
+                        hasMessagingService: !!this.env?.services?.messaging,
+                        hasRpcService: !!this.env?.services?.rpc,
+                        commentText: commentText.substring(0, 30) + (commentText.length > 30 ? '...' : '')
+                    });
+                    
+                    // Try multiple methods to send the message
                     let success = false;
-                    let serviceAttempted = false;
+                    let error = null;
                     
-                    // Try using the standard post function if available
-                    if (this.env && this.env.services && this.env.services.messaging) {
-                        serviceAttempted = true;
-                        try {
+                    // Method 1: Try using messaging service post method (modern Odoo)
+                    try {
+                        if (this.env?.services?.messaging?.post) {
+                            console.log("Trying messaging.post method");
                             await this.env.services.messaging.post({
                                 threadId: threadId,
                                 threadModel: 'mail.activity.thread',
                                 body: commentText,
                                 isNote: true,
-                                attachmentIds: attachments.map(a => a.id),
-                                attachmentTokens: attachments.map(a => a.accessToken || ''),
+                                // Add message info for thread linking
+                                activity_done_message_id: this.message.id,
+                                res_model: this.message.model,
+                                res_id: this.message.res_id,
                             });
                             success = true;
-                        } catch (msgError) {
-                            console.error("Error posting via messaging service:", msgError);
+                            console.log("Successfully posted comment using messaging.post");
+                        }
+                    } catch (err) {
+                        console.warn("Error using messaging.post:", err.name, err.message);
+                        console.error("Full error:", err);
+                        error = err;
+                    }
+                    
+                    // Method 2: Try using legacy postMessage method
+                    if (!success && this.env?.services?.messaging?.postMessage) {
+                        try {
+                            console.log("Trying messaging.postMessage method");
+                            await this.env.services.messaging.postMessage({
+                                thread_id: threadId,
+                                thread_model: 'mail.activity.thread',
+                                content: commentText,
+                                is_note: true,
+                                // Add message info for thread linking
+                                activity_done_message_id: this.message.id,
+                                res_model: this.message.model,
+                                res_id: this.message.res_id,
+                            });
+                            success = true;
+                            console.log("Successfully posted comment using messaging.postMessage");
+                        } catch (err) {
+                            console.warn("Error using messaging.postMessage:", err.name, err.message);
+                            console.error("Full error:", err);
+                            error = err;
                         }
                     }
                     
-                    // Fallback to RPC
-                    if (!success && this.env && this.env.services && this.env.services.rpc) {
-                        serviceAttempted = true;
+                    // Method 3: Try using direct RPC with detailed configuration
+                    if (!success && this.env?.services?.rpc) {
                         try {
-                            await this.env.services.rpc('/mail/thread/post', {
+                            console.log("Trying direct RPC method with detailed config");
+                            const rpcResult = await this.env.services.rpc('/mail/thread/post', {
                                 thread_model: 'mail.activity.thread',
                                 thread_id: threadId,
                                 body: commentText,
                                 subtype_xmlid: 'mail.mt_note',
-                                attachment_ids: attachments.map(a => a.id),
+                                // Add message info for thread linking
+                                activity_done_message_id: this.message.id,
+                                res_model: this.message.model,
+                                res_id: this.message.res_id,
+                            }, {
+                                silent: false,
+                                timeout: 10000, // 10 second timeout
+                                shadow: false
                             });
+                            console.log("RPC result:", rpcResult);
                             success = true;
-                        } catch (rpcError) {
-                            console.error("Error posting via RPC:", rpcError);
+                            console.log("Successfully posted comment using direct RPC");
+                        } catch (err) {
+                            console.warn("Error using direct RPC:", err.name, err.message);
+                            console.error("Full error:", err);
+                            error = err;
                         }
                     }
                     
-                    // Fallback to ORM
-                    if (!success && this.env && this.env.services && this.env.services.orm) {
-                        serviceAttempted = true;
+                    // Method 4: Try alternative RPC endpoint
+                    if (!success && this.env?.services?.rpc) {
                         try {
-                            await this.env.services.orm.create('mail.message', [{
+                            console.log("Trying alternative RPC endpoint");
+                            const rpcResult = await this.env.services.rpc('/mail/message/post', {
+                                thread_model: 'mail.activity.thread',
+                                thread_id: threadId,
+                                message_type: 'comment',
+                                content: commentText,
+                                subtype: 'mail.mt_note',
+                                // Add message info for thread linking
+                                activity_done_message_id: this.message.id,
+                                res_model: this.message.model,
+                                res_id: this.message.res_id,
+                            }, {
+                                silent: false,
+                                timeout: 10000,
+                            });
+                            console.log("Alternative RPC result:", rpcResult);
+                            success = true;
+                            console.log("Successfully posted comment using alternative RPC endpoint");
+                        } catch (err) {
+                            console.warn("Error using alternative RPC endpoint:", err.name, err.message);
+                            console.error("Full error:", err);
+                            error = err;
+                        }
+                    }
+                    
+                    // Method 5: Try direct message creation through ORM
+                    if (!success && this.orm) {
+                        try {
+                            console.log("Trying direct message creation through ORM");
+                            const messageValues = {
                                 model: 'mail.activity.thread',
                                 res_id: threadId,
                                 body: commentText,
                                 message_type: 'comment',
-                                subtype_xmlid: 'mail.mt_note',
-                                attachment_ids: attachments.map(a => a.id),
-                            }]);
+                                subtype_id: 1,  // Note subtype
+                            };
+                            const messageId = await this.orm.create('mail.message', [messageValues]);
+                            console.log("Created message through ORM, ID:", messageId);
                             success = true;
-                        } catch (ormError) {
-                            console.error("Error creating message with ORM:", ormError);
+                        } catch (err) {
+                            console.warn("Error creating message through ORM:", err.name, err.message);
+                            console.error("Full error:", err);
+                            error = err;
                         }
                     }
                     
                     if (success) {
-                        // Clear the textarea and attachments
+                        // Success! Clear the textarea
                         if (textarea) {
                             textarea.value = '';
                         }
                         
-                        // Clear attachments
+                        // Clear commentText in the model
                         this.message.commentModel.update({
-                            commentText: '',
-                            attachments: clear()
+                            commentText: ''
                         });
-                        
-                        // Refresh thread to show the new message
-                        if (this.message.commentModel.thread.fetchMessages) {
-                            await this.message.commentModel.thread.fetchMessages();
-                        }
                         
                         // Update count
                         this._updateCommentCount();
+                        
+                        console.log("Activity comment saved successfully");
+                        alert("Comment saved successfully to database.");
                     } else {
-                        if (!serviceAttempted) {
-                            alert("Failed to post comment: no messaging services available. Please refresh the page and try again.");
-                        } else {
-                            alert("Failed to post comment. Please try again later.");
+                        // If all methods failed, show a detailed error but still provide a visual fallback
+                        console.error("All activity comment submission methods failed", error);
+                        
+                        // Create a temporary local message for UI display
+                        try {
+                            console.log("Creating temporary local message for UI display");
+                            
+                            // Get current user information
+                            const currentUser = {
+                                id: this.env.services.user.userId || 1,
+                                name: this.env.services.user.name || "Current User",
+                                avatar: `/web/image?model=res.users&field=avatar_128&id=${this.env.services.user.userId || 1}`
+                            };
+                            
+                            // Create a mock message object
+                            const tempMessage = {
+                                id: -Math.floor(Math.random() * 10000),
+                                body: commentText,
+                                date: new Date(),
+                                author: currentUser,
+                                isLocalOnly: true,
+                                isTemporary: true
+                            };
+                            
+                            // Add the message to the thread for display
+                            if (!this.message.commentModel.thread) {
+                                // Create a temporary thread if none exists
+                                const tempThread = {
+                                    id: -Math.floor(Math.random() * 10000),
+                                    model: 'mail.activity.thread',
+                                    name: 'Temporary Thread',
+                                    messages: [tempMessage]
+                                };
+                                this.message.commentModel.update({ thread: tempThread });
+                            } else {
+                                // Add message to existing thread
+                                const thread = this.message.commentModel.thread;
+                                if (!thread.messages) {
+                                    thread.messages = [];
+                                }
+                                thread.messages.push(tempMessage);
+                                this.message.commentModel.update({ thread: thread });
+                            }
+                            
+                            // Update the comment count
+                            this._updateCommentCount();
+                            
+                            // Clear the textarea
+                            if (textarea) {
+                                textarea.value = '';
+                            }
+                            
+                            // Clear the comment text in the model
+                            this.message.commentModel.update({
+                                commentText: '',
+                                hasLocalOnlyMessages: true
+                            });
+                            
+                            // Try to save the comment in the background (not awaiting response)
+                            this._retryCommentInBackground(commentText, threadId);
+                            
+                            // Visual indicator for local-only status (non-intrusive)
+                            // Find the most recently added message
+                            setTimeout(() => {
+                                const localMsgElements = document.querySelectorAll('.o_thread_message_local');
+                                if (localMsgElements && localMsgElements.length > 0) {
+                                    // Highlight the most recent local message with a subtle animation
+                                    const latestMsg = localMsgElements[localMsgElements.length - 1];
+                                    latestMsg.style.transition = 'background-color 0.5s ease';
+                                    latestMsg.style.backgroundColor = '#fffde7';
+                                    setTimeout(() => {
+                                        latestMsg.style.backgroundColor = '';
+                                    }, 1500);
+                                }
+                            }, 100);
+                        } catch (localError) {
+                            console.error("Error creating local message:", localError);
+                            alert(`Failed to save comment. Last error: ${error?.message || 'Unknown error'}`);
+                        }
+                    }
+                                        
+                } catch (error) {
+                    console.error("Error in _submitCommentWithAttachments:", error);
+                    alert(`Failed to save comment: ${error?.message || 'Unknown error'}`);
+                }
+            },
+            
+            /**
+             * Try to save a comment in the background
+             * @param {string} commentText The text of the comment
+             * @param {number} threadId The ID of the thread
+             */
+            async _retryCommentInBackground(commentText, threadId) {
+                try {
+                    console.log("Attempting to save comment in background");
+                    
+                    // Create a more robust retry mechanism
+                    const maxRetries = 5;
+                    const initialWaitTime = 2000; // 2 seconds
+                    
+                    const performRetry = async (attempt = 1, waitTime = initialWaitTime) => {
+                        // Stop if too many attempts
+                        if (attempt > maxRetries) {
+                            console.error(`Giving up after ${maxRetries} attempts to save comment`);
+                            return false;
+                        }
+                        
+                        // Check if we're online before trying
+                        const isOnline = window.navigator.onLine;
+                        if (!isOnline) {
+                            console.log("Currently offline, will retry when online");
+                            // Setup online event listener to retry when connection is restored
+                            const retryWhenOnline = () => {
+                                window.removeEventListener('online', retryWhenOnline);
+                                // Wait a bit after coming online before retrying
+                                setTimeout(() => performRetry(attempt), 2000);
+                            };
+                            window.addEventListener('online', retryWhenOnline);
+                            return false;
+                        }
+                        
+                        // Wait before trying
+                        await new Promise(resolve => setTimeout(resolve, waitTime));
+                        
+                        // If thread ID is negative, we need to create a proper thread first
+                        try {
+                            // Only try to create a new thread if we have a negative ID and orm service
+                            if (threadId < 0 && this.orm) {
+                                console.log("Attempting to create a proper thread before message posting");
+                                let realThreadId;
+                                
+                                try {
+                                    // Create a real thread
+                                    const threadValues = {
+                                        activity_id: this.activity.id,
+                                        res_model: this.activity.res_model || 'res.partner',
+                                        res_id: this.activity.res_id || '0',
+                                    };
+                                    
+                                    const newThreadIds = await this.orm.create('mail.activity.thread', [threadValues]);
+                                    realThreadId = newThreadIds[0];
+                                    console.log("Created real thread with ID:", realThreadId);
+                                    
+                                    // Update our threadId to use the real one
+                                    threadId = realThreadId;
+                                    
+                                    // Update thread in model
+                                    if (this.activity.commentModel.thread) {
+                                        const updatedThread = {...this.activity.commentModel.thread, id: realThreadId};
+                                        this.activity.commentModel.update({ thread: updatedThread });
+                                    }
+                                } catch (threadError) {
+                                    console.error("Failed to create real thread:", threadError);
+                                    // Continue with negative ID, hoping a thread gets created automatically
+                                }
+                            }
+                        } catch (threadCreationError) {
+                            console.error("Error while trying to create a real thread:", threadCreationError);
+                            // Continue with retry using existing threadId
+                        }
+                        
+                        // Try to save using mail.thread's message_post
+                        try {
+                            if (this.env?.services?.rpc) {
+                                // Get context information based on component type
+                                let context = {
+                                    'mail_activity_thread_id': threadId
+                                };
+                                
+                                if (this.message) {
+                                    // MessageView context
+                                    context.mail_activity_done_message_id = this.message.id;
+                                    context.res_model = this.message.model || 'mail.message';
+                                    context.res_id = this.message.res_id || 0;
+                                } else if (this.activity) {
+                                    // ActivityView context 
+                                    context.mail_activity_id = this.activity.id;
+                                    context.res_model = this.activity.res_model;
+                                    context.res_id = this.activity.res_id;
+                                }
+                                
+                                // Try using message_post method (preferred)
+                                console.log(`Background save (attempt ${attempt}): Using message_post method`);
+                                try {
+                                    const messagePostResult = await this.env.services.rpc({
+                                        model: 'mail.activity.thread',
+                                        method: 'message_post',
+                                        args: [[threadId]],
+                                        kwargs: {
+                                            body: commentText,
+                                            message_type: 'comment',
+                                            subtype_xmlid: 'mail.mt_note',
+                                            context: context
+                                        }
+                                    }, {
+                                        silent: true,     // Don't show error popups
+                                        shadow: true,     // Don't block UI
+                                        timeout: 10000    // 10 second timeout
+                                    });
+                                    
+                                    console.log("Background save result:", messagePostResult);
+                                    
+                                    // Update UI to reflect successful save
+                                    this._updateLocalMessageStatus(messagePostResult);
+                                    
+                                    return true;
+                                } catch (rpcError) {
+                                    console.warn(`RPC failed on attempt ${attempt}:`, rpcError);
+                                    
+                                    // Check error type to determine if we should retry
+                                    if (rpcError.name === 'ConnectionLostError' || 
+                                        !window.navigator.onLine ||
+                                        rpcError.message?.includes('network') ||
+                                        rpcError.message?.includes('timeout')) {
+                                        
+                                        console.log(`Network error on attempt ${attempt}, will retry in ${waitTime*2/1000} seconds`);
+                                        // Exponential backoff - double the wait time
+                                        return performRetry(attempt + 1, waitTime * 2);
+                                    }
+                                    
+                                    // For other errors, try fallback methods
+                                    throw rpcError;
+                                }
+                            }
+                        } catch (err) {
+                            // Try with direct ORM create if message_post fails
+                            try {
+                                if (this.orm) {
+                                    console.log(`Background save (attempt ${attempt}): Trying direct ORM create`);
+                                    // Build message values
+                                    const messageValues = {
+                                        model: 'mail.activity.thread',
+                                        res_id: threadId,
+                                        body: commentText,
+                                        message_type: 'comment',
+                                        subtype_id: 1, // Note subtype
+                                    };
+                                    
+                                    // Add related fields based on context
+                                    if (this.message) {
+                                        messageValues.activity_done_message_id = this.message.id;
+                                    } else if (this.activity) {
+                                        messageValues.activity_ids = [[4, this.activity.id, false]];
+                                    }
+                                    
+                                    const messageId = await this.orm.create('mail.message', [messageValues]);
+                                    console.log(`Background save (attempt ${attempt}): Created message through ORM, ID:`, messageId);
+                                    
+                                    // Update UI to reflect successful save
+                                    this._updateLocalMessageStatus(messageId);
+                                    
+                                    return true;
+                                }
+                            } catch (ormError) {
+                                console.error(`Background save ORM fallback failed on attempt ${attempt}:`, ormError);
+                                
+                                // Check if this is a network error that we should retry
+                                if (ormError.name === 'ConnectionLostError' || 
+                                    !window.navigator.onLine ||
+                                    ormError.message?.includes('network') ||
+                                    ormError.message?.includes('timeout')) {
+                                    
+                                    console.log(`Network error on ORM fallback attempt ${attempt}, will retry in ${waitTime*2/1000} seconds`);
+                                    // Exponential backoff - double the wait time
+                                    return performRetry(attempt + 1, waitTime * 2);
+                                }
+                            }
+                        }
+                        
+                        // If we got here, none of the methods worked but it wasn't a network error
+                        // Try one more time with increased wait
+                        if (attempt < maxRetries) {
+                            console.log(`All methods failed on attempt ${attempt}, will retry once more`);
+                            return performRetry(attempt + 1, waitTime * 2);
+                        }
+                        
+                        return false;
+                    };
+                    
+                    // Start the retry process
+                    return performRetry();
+                    
+                } catch (error) {
+                    console.error("Error in background save:", error);
+                    return false;
+                }
+            },
+            
+            /**
+             * Update local message status after successful background save
+             * @param {number|object} messageIdOrResult The message ID or result object
+             */
+            _updateLocalMessageStatus(messageIdOrResult) {
+                try {
+                    // Get message ID from result
+                    const messageId = typeof messageIdOrResult === 'number' ? 
+                        messageIdOrResult : 
+                        (messageIdOrResult.id || messageIdOrResult);
+                    
+                    // Get the correct comment model based on context
+                    const commentModel = this.message ? 
+                        this.message.commentModel : 
+                        (this.activity ? this.activity.commentModel : null);
+                        
+                    if (commentModel && commentModel.thread && commentModel.thread.messages) {
+                        const messages = commentModel.thread.messages;
+                        const localMessages = messages.filter(msg => msg.isLocalOnly);
+                        
+                        if (localMessages.length > 0) {
+                            // Update the first local message with the server ID
+                            localMessages[0].isLocalOnly = false;
+                            localMessages[0].id = messageId;
+                            
+                            // Update the hasLocalOnlyMessages flag based on remaining local messages
+                            const stillHasLocal = messages.some(msg => msg.isLocalOnly);
+                            commentModel.update({
+                                hasLocalOnlyMessages: stillHasLocal
+                            });
+                            
+                            console.log("Local message updated to synced status");
                         }
                     }
                 } catch (error) {
-                    console.error("Error submitting comment:", error);
-                    alert("An error occurred while submitting your comment. Please try again.");
+                    console.error("Error updating local message status:", error);
                 }
             },
             
@@ -1857,148 +2762,136 @@ try {
                     this._ensureServices();
                     
                     if (!this.message || !this.message.id) {
-                        return;
+                        return null;
                     }
                     
-                    // Check if thread already exists
-                    if (!this.message.commentModel.thread) {
-                        // Basic thread creation if component method not available
-                        try {
-                            // Get ORM service from this.orm
-                            const orm = this.orm;
+                    // Return existing thread if it's already initialized
+                    if (this.message.commentModel.thread) {
+                        return this.message.commentModel.thread;
+                    }
+                    
+                    // Basic thread creation if ORM not available
+                    try {
+                        // Get ORM service from this.orm
+                        const orm = this.orm;
+                        
+                        if (!orm) {
+                            // Fallback: create a temporary thread object locally
+                            console.log("ORM not available, creating temporary thread");
+                            const tempThread = {
+                                id: -Math.floor(Math.random() * 10000) - 100000,
+                                model: 'mail.activity.thread',
+                                name: 'Temporary Message Thread',
+                                isTemporary: true,
+                                messages: []
+                            };
                             
-                            if (!orm) {
-                                // Fallback: try to create a temporary thread object locally
-                                if (this.env && this.env.messaging && this.env.messaging.models && this.env.messaging.models['Thread']) {
-                                    const Thread = this.env.messaging.models['Thread'];
-                                    const tempThreadId = -Math.floor(Math.random() * 10000) - 100000; // Different range from ActivityView
-                                    
-                                    const thread = Thread.create({
-                                        id: tempThreadId,
-                                        model: 'mail.activity.thread',
-                                        name: 'Temporary Message Thread',
-                                        isTemporary: true,
-                                    });
-                                    
-                                    if (thread) {
-                                        this.message.commentModel.update({ 
-                                            thread: thread,
-                                            showComments: true
-                                        });
-                                        return thread;
-                                    }
-                                }
-                                return null;
-                            }
+                            this.message.commentModel.update({ 
+                                thread: tempThread,
+                                showComments: true
+                            });
                             
-                            // For completed activity messages, we need to search by activity_done_message_id
-                            let searchDomain = [];
-                            let isDoneActivity = false;
-                            
-                            // Support both activity and activity done messages with broader patterns
-                            // Improved detection of activity done messages
-                            if (this.message.model && this.message.model.includes('mail.activity')) {
-                                isDoneActivity = true;
-                                searchDomain = [['activity_done_message_id', '=', this.message.id]];
-                            } else if (this.message.subtype_id && this.message.subtype_id[0] === 3) {
-                                isDoneActivity = true;
-                                searchDomain = [['activity_done_message_id', '=', this.message.id]];
-                            } else if (this.message.body) {
-                                // More comprehensive matching for all possible done/completed activities
-                                const lowerBody = this.message.body.toLowerCase();
-                                if (lowerBody.includes('to do done') || 
-                                    lowerBody.includes(' done') || 
-                                    lowerBody.includes('marked as done') ||
-                                    lowerBody.includes('completed') ||
-                                    lowerBody.includes('finish') || 
-                                    lowerBody.includes('to do')) {
-                                    
-                                    isDoneActivity = true;
-                                    searchDomain = [['activity_done_message_id', '=', this.message.id]];
-                                    console.log("Detected completed activity message:", this.message.id);
-                                }
-                            }
-                            
-                            // If not detected as done activity yet, try generic fallback
-                            if (!isDoneActivity) {
-                                searchDomain = [
-                                    '|',
-                                    ['activity_id', '=', this.message.id],
-                                    ['activity_done_message_id', '=', this.message.id]
-                                ];
-                            }
-                            
-                            console.log("Searching for thread with domain:", searchDomain);
-                            
-                            // Search for existing thread
-                            const threadRecords = await orm.searchRead(
-                                'mail.activity.thread',
-                                searchDomain,
-                                ['id', 'res_model', 'res_id']
-                            );
-                            
-                            let threadId;
-                            if (threadRecords.length === 0) {
-                                // Create a new thread record if none exists
-                                const threadValues = {
-                                    res_model: this.message.model || 'mail.activity',
-                                    res_id: this.message.res_id || '0',
-                                };
-                                
-                                // Add the appropriate ID field based on whether this is a done activity
-                                if (isDoneActivity) {
-                                    threadValues.activity_done_message_id = this.message.id;
-                                } else {
-                                    threadValues.activity_id = this.message.id;
-                                }
-                                
-                                console.log("Creating new thread with values:", threadValues);
-                                const newThreadIds = await orm.create('mail.activity.thread', [threadValues]);
-                                threadId = newThreadIds[0];
-                            } else {
-                                threadId = threadRecords[0].id;
-                                console.log("Found existing thread:", threadId);
-                            }
-                            
-                            // Try to find or create thread in models
-                            if (this.env && this.env.messaging && this.env.messaging.models && this.env.messaging.models['Thread']) {
-                                const Thread = this.env.messaging.models['Thread'];
-                                
-                                // Check if thread exists
-                                let thread = Thread.all().find(t => t.id === threadId && t.model === 'mail.activity.thread');
-                                
-                                // Create thread if it doesn't exist
-                                if (!thread) {
-                                    thread = Thread.create({
-                                        id: threadId,
-                                        model: 'mail.activity.thread',
-                                    });
-                                }
-                                
-                                // Update message comment model
-                                if (thread) {
-                                    this.message.commentModel.update({ thread: thread });
-                                    
-                                    // Pre-fetch messages to update comment count
-                                    if (typeof thread.fetchMessages === 'function') {
-                                        thread.fetchMessages().then(() => {
-                                            // Update count after messages are loaded
-                                            this._updateCommentCount();
-                                        });
-                                    }
-                                    
-                                    return thread;
-                                }
-                            }
-                            
-                            return null;
-                        } catch (e) {
-                            console.error("Error creating thread in base model:", e);
-                            return null;
+                            return tempThread;
                         }
+                        
+                        // For completed activity messages, we need to search by activity_done_message_id
+                        let searchDomain = [];
+                        let isDoneActivity = false;
+                        
+                        // Improved detection of activity done messages
+                        if (this.message.model && this.message.model.includes('mail.activity')) {
+                            isDoneActivity = true;
+                            searchDomain = [['activity_done_message_id', '=', this.message.id]];
+                        } else if (this.message.subtype_id && this.message.subtype_id[0] === 3) {
+                            isDoneActivity = true;
+                            searchDomain = [['activity_done_message_id', '=', this.message.id]];
+                        } else if (this.message.body) {
+                            // More comprehensive matching for all possible done/completed activities
+                            const lowerBody = this.message.body.toLowerCase();
+                            if (lowerBody.includes('to do done') || 
+                                lowerBody.includes(' done') || 
+                                lowerBody.includes('marked as done') ||
+                                lowerBody.includes('completed') ||
+                                lowerBody.includes('finish') || 
+                                lowerBody.includes('to do')) {
+                                
+                                isDoneActivity = true;
+                                searchDomain = [['activity_done_message_id', '=', this.message.id]];
+                                console.log("Detected completed activity message:", this.message.id);
+                            }
+                        }
+                        
+                        // If not detected as done activity yet, try generic fallback
+                        if (!isDoneActivity) {
+                            searchDomain = [
+                                '|',
+                                ['activity_id', '=', this.message.id],
+                                ['activity_done_message_id', '=', this.message.id]
+                            ];
+                        }
+                        
+                        console.log("Searching for thread with domain:", searchDomain);
+                        
+                        // Search for existing thread
+                        const threadRecords = await orm.searchRead(
+                            'mail.activity.thread',
+                            searchDomain,
+                            ['id', 'res_model', 'res_id']
+                        );
+                        
+                        let threadId;
+                        if (threadRecords.length === 0) {
+                            // Create a new thread record if none exists
+                            const threadValues = {
+                                res_model: this.message.model || 'mail.activity',
+                                res_id: this.message.res_id || '0',
+                            };
+                            
+                            // Add the appropriate ID field based on whether this is a done activity
+                            if (isDoneActivity) {
+                                threadValues.activity_done_message_id = this.message.id;
+                            } else {
+                                threadValues.activity_id = this.message.id;
+                            }
+                            
+                            console.log("Creating new thread with values:", threadValues);
+                            const newThreadIds = await orm.create('mail.activity.thread', [threadValues]);
+                            threadId = newThreadIds[0];
+                        } else {
+                            threadId = threadRecords[0].id;
+                            console.log("Found existing thread:", threadId);
+                        }
+                        
+                        // Create a simple thread object with the threadId
+                        const thread = {
+                            id: threadId,
+                            model: 'mail.activity.thread',
+                            messages: []
+                        };
+                        
+                        // Update the model with the new thread
+                        this.message.commentModel.update({ 
+                            thread: thread
+                        });
+                        
+                        return thread;
+                    } catch (e) {
+                        console.error("Error creating thread in base model:", e);
+                        // Create a backup thread as fallback
+                        const tempThread = {
+                            id: -Math.floor(Math.random() * 10000) - 100000,
+                            model: 'mail.activity.thread',
+                            name: 'Temporary Thread (Error)',
+                            isTemporary: true,
+                            messages: []
+                        };
+                        
+                        this.message.commentModel.update({ 
+                            thread: tempThread
+                        });
+                        
+                        return tempThread;
                     }
-                    
-                    return this.message.commentModel.thread;
                 } catch (error) {
                     console.error("Failed to initialize message thread:", error);
                     return null;
@@ -2026,25 +2919,41 @@ try {
                             // Update count when closing
                             this._updateCommentCount();
                         } else {
-                            // If panel closed, show it
+                            // First set showComments to true to display the panel
                             this.message.commentModel.update({
                                 showComments: true
                             });
                             
-                            // Initialize thread if needed
+                            // Create a basic empty thread if one doesn't exist
+                            if (!this.message.commentModel.thread) {
+                                const tempThread = {
+                                    id: -Math.floor(Math.random() * 10000) - 100000,
+                                        model: 'mail.activity.thread',
+                                        name: 'Temporary Thread',
+                                    isTemporary: true,
+                                    messages: []
+                                };
+                                this.message.commentModel.update({ thread: tempThread });
+                            }
+                            
+                            // Then initialize thread in background
                             console.log("Initializing comment thread for message", this.message.id);
                             this._initializeCommentThread()
                                 .then((thread) => {
                                     if (thread) {
                                         console.log("Thread initialization successful for message", this.message.id);
+                                        if (thread !== this.message.commentModel.thread) {
+                                            this.message.commentModel.update({ thread: thread });
+                                        }
                                         // Update count after thread is loaded
                                         this._updateCommentCount();
                                     } else {
-                                        console.warn("Thread initialization returned empty thread");
+                                        console.log("Thread initialization returned no thread, using existing");
                                     }
                                 })
                                 .catch(error => {
                                     console.error("Thread initialization failed for message", this.message.id, error);
+                                    // Keep using the temporary thread
                                 });
                             
                             // Focus the textarea
