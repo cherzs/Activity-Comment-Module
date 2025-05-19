@@ -10,7 +10,7 @@ Activity Comments
 This module allows users to add comments to activities.
 Comments can be added, resolved, and managed within activities.
     """,
-    'depends': ['mail'],
+    'depends': ['mail','web','base','bus'],
     'data': [
         'security/ir.model.access.csv',
     ],

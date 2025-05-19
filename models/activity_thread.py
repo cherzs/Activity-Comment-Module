@@ -25,10 +25,20 @@ class ActivityThread(models.Model):
     )
 
     res_model = fields.Char(string='ResModel')
+    message_ids = fields.One2many('mail.message', 'res_id', string='Messages', domain=[('model', '=', 'mail.activity.thread')])
     res_id = fields.Char(string='ResId')
 
     name = fields.Char(string='Name')
 
+    @api.model
+    def _get_composer_values(self, thread, composition_mode, **kwargs):
+        return {
+            'thread': thread,
+            'type': 'note',
+            'mode': composition_mode,
+            'res_model': self._name,
+            'res_id': thread.id,
+        }
     # Make sure when an activity is deleted, its thread is deleted as well
     @api.model_create_multi
     def create(self, vals_list):

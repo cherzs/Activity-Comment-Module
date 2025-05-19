@@ -12,31 +12,33 @@
                     <t t-esc="getToggleText()"/>
                 </span>
 
-                <div t-if="state.showComments" class="o_activity_comments_container" t-ref="commentPanel" style="background-color: #e7e9ed;">
-                    <!-- Thread with messages and composer -->
-                    <t t-if="state.thread">
-                        <Thread
-                            thread="state.thread"
-                            order="'asc'"
-                            showEmptyMessage="false"
-                            showJumpPresent="false"
-                            showDates="false"
+                <!-- Comments panel -->
+                <div t-if="state.showComments" 
+                     class="o_Activity_comments_panel o_activity_comments_container" 
+                     t-ref="commentPanel" 
+                     style="background-color: #e7e9ed;">
+                    <Thread
+                        t-if="state.thread"
+                        thread="state.thread"
+                        order="'asc'"
+                        showEmptyMessage="false"
+                        showJumpPresent="false"
+                        showDates="false"
+                    />
+                    <div class="o_activity_comments_composer" style="margin-top: 8px;">
+                        <Composer
+                            t-if="state.thread and state.thread.composer"
+                            placeholder="state.texts.addCommentPlaceholder"
+                            composer="state.thread.composer"
+                            type="'note'"
+                            showFullComposer="false"
+                            mode="'extended'"
+                            allowUpload="true"
                         />
-                        <!-- Add the composer using thread.composer -->
-                        <div class="o_activity_comments_composer" style="margin-top: 8px;">
-                            <Composer
-                                placeholder="state.texts.addCommentPlaceholder"
-                                composer="state.thread.composer"
-                                type="'note'"
-                                showFullComposer="false"
-                                mode="'extended'"
-                                allowUpload="true"
-                            />
-                        </div>
-                    </t>
-                    <t t-else="">
-                        <div class="text-muted p-2">No thread available for this activity</div>
-                    </t>
+                    </div>
+                    <div class="o_activity_comments_no_comments" t-if="!state.thread">
+                        No comments yet
+                    </div>
                 </div>
             </div>
         </xpath>
