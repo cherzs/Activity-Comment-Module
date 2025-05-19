@@ -4,126 +4,139 @@ import { patch } from "@web/core/utils/patch";
 import { MessagingMenu } from "@mail/core/public_web/messaging_menu";
 import { useService } from "@web/core/utils/hooks";
 import { _t } from "@web/core/l10n/translation";
+import { useState } from "@odoo/owl";
 
 patch(MessagingMenu.prototype, {
     setup() {
-        this.actionService = useService("action");
-        this.store = useService("mail.store");
+        // Panggil setup asli terlebih dahulu
+        super.setup();
+        
+        // Gunakan useState untuk store seperti di implementasi asli
+        this.store = useState(useService("mail.store"));
+        this.action = useService("action");
         this.orm = useService("orm");
         
-        // Only initialize mail-specific services if we're in a private context
+        // Tambahkan state untuk menangani activity thread
+        Object.assign(this.state, {
+            activityThreadInfo: null,
+        });
+
+        // Inisialisasi service tambahan jika diperlukan
         if (!this.store.inPublicPage) {
             try {
                 this.threadService = useService("mail.thread");
                 this.chatWindowService = useService("mail.chat_window");
             } catch (error) {
                 console.warn("Mail services not available:", error);
-                this.threadService = null;
-                this.chatWindowService = null;
             }
         }
-        
-        super.setup(...arguments);      
     },
 
     get threads() {
-        // If we're in public context or thread service is not available, return empty array
-        if (this.store.inPublicPage || !this.threadService) {
+        // Gunakan implementasi asli sebagai base
+        const baseThreads = super.threads;
+        if (!baseThreads) {
             return [];
         }
 
-        const threads = super.threads;
-        if (!threads) {
-            return [];
-        }
-        
-        return threads.filter(thread => {
-            if (thread.needactionMessages && thread.needactionMessages.length > 0) {
-                return true;
+        // Filter thread sesuai kebutuhan
+        return baseThreads.filter(thread => {
+            // Tambahkan filter untuk activity thread
+            if (thread.model === 'mail.activity.thread') {
+                return thread.needactionMessages?.length > 0;
             }
-    
-            return false;
+            // Filter thread lainnya
+            return thread.needactionMessages?.length > 0;
         });
     },
 
     async openDiscussion(thread) {
-        if (!thread) return;
+        if (!thread) {
+            return;
+        }
 
-        // Only mark as read if we're in private context and thread service is available
-        if (!this.store.inPublicPage && this.threadService) {
+        // Mark as read seperti implementasi asli
+        if (thread.needactionMessages?.length > 0) {
             this.markAsRead(thread);
         }
 
-        let resModel;
-        let resId;
-        let threadInfo = null;
-
         try {
+            let resModel, resId, threadInfo = null;
+
+            // Handle activity thread
             if (thread.model === 'mail.activity.thread') {
-                const threadRecord = await this.orm.searchRead(
+                const [threadRecord] = await this.orm.searchRead(
                     'mail.activity.thread',
                     [['id', '=', thread.id]],
                     ['activity_id', 'activity_done_message_id', 'res_model', 'res_id']
                 );
 
-                resModel = threadRecord[0]?.res_model;
-                resId = parseInt(threadRecord[0]?.res_id);
-                if (!resId) throw new Error("Missing res_id in activity");
+                if (!threadRecord) {
+                    throw new Error("Activity thread not found");
+                }
 
+                resModel = threadRecord.res_model;
+                resId = parseInt(threadRecord.res_id);
+                
                 threadInfo = {
                     threadModel: 'mail.activity.thread',
                     threadId: thread.id,
-                    activityId: threadRecord[0]?.activity_id[0],
-                    activityDoneMessageId: threadRecord[0]?.activity_done_message_id[0]
+                    activityId: threadRecord.activity_id?.[0],
+                    activityDoneMessageId: threadRecord.activity_done_message_id?.[0]
                 };
 
-            } else if (thread.model === 'knowledge.article.thread') {
-                const articleRecord = await this.orm.searchRead(
-                    'knowledge.article.thread',
-                    [['id', '=', thread.id]],
-                    ['article_id']
-                );
-
-                resModel = 'knowledge.article';
-                resId = articleRecord[0]?.article_id?.[0];
-                if (!resId) throw new Error("Missing res_id in knowledge");
-            } else {
-                resModel = thread.model;
-                resId = thread.id;
-            }
-
-            if (threadInfo) {
+                // Simpan info thread ke state
+                this.state.activityThreadInfo = threadInfo;
+                
+                // Simpan ke session storage untuk akses di komponen lain
                 sessionStorage.setItem('open_activity_comments', JSON.stringify(threadInfo));
             }
 
-            this.actionService.doAction({
+            // Buka form view seperti implementasi asli
+            const action = {
                 type: "ir.actions.act_window",
-                res_id: resId,
-                res_model: resModel,
+                res_model: resModel || thread.model,
+                res_id: resId || thread.id,
                 views: [[false, "form"]],
                 target: 'current',
-                display_name: thread.name
-            }, {
-                clearBreadcrumbs: false,
-                additionalContext: {
-                    active_id: resId,
-                    active_model: resModel
+                context: {
+                    active_id: resId || thread.id,
+                    active_model: resModel || thread.model
                 }
-            });
+            };
 
-            // Only try to close chat window if we're in a private context and the service is available
-            if (!this.store.inPublicPage && this.chatWindowService && this.store.discuss?.chatWindows) {
+            // Gunakan action service seperti di implementasi asli
+            await this.action.doAction(action);
+
+            // Tutup chat window jika ada
+            if (this.store.discuss?.chatWindows) {
                 const chatWindow = this.store.discuss.chatWindows.find(
-                    (window) => window.thread?.eq(thread)
+                    window => window.thread?.eq(thread)
                 );
                 if (chatWindow) {
-                    this.chatWindowService.close(chatWindow);
+                    this.store.ChatWindow.get({ thread })?.close();
                 }
             }
-            this.close();
+
+            // Tutup dropdown menu
+            this.dropdown.close();
 
         } catch (error) {
             console.error("Failed to open discussion:", error);
+            // Tambahkan notifikasi error jika diperlukan
+        }
+    },
+
+    // Override method markAsRead untuk menangani activity thread
+    markAsRead(thread) {
+        if (thread.model === 'mail.activity.thread') {
+            // Handle marking activity thread as read
+            if (thread.needactionMessages?.length > 0) {
+                thread.markAllMessagesAsRead();
+            }
+        } else {
+            // Gunakan implementasi asli untuk thread lainnya
+            super.markAsRead(thread);
         }
     }
 });
