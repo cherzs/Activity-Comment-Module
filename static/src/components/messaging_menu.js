@@ -12,7 +12,7 @@ patch(MessagingMenu.prototype, {
         super.setup();
         
         // Gunakan useState untuk store seperti di implementasi asli
-        this.store = useState(useService("mail.store"));
+        this.storeService = useState(useService("mail.store"));
         this.action = useService("action");
         this.orm = useService("orm");
         
@@ -22,10 +22,9 @@ patch(MessagingMenu.prototype, {
         });
 
         // Inisialisasi service tambahan jika diperlukan
-        if (!this.store.inPublicPage) {
+        if (!this.storeService.inPublicPage) {
             try {
-                this.threadService = useService("mail.thread");
-                this.chatWindowService = useService("mail.chat_window");
+                this.storeService = useService("mail.store");
             } catch (error) {
                 console.warn("Mail services not available:", error);
             }
@@ -109,12 +108,12 @@ patch(MessagingMenu.prototype, {
             await this.action.doAction(action);
 
             // Tutup chat window jika ada
-            if (this.store.discuss?.chatWindows) {
-                const chatWindow = this.store.discuss.chatWindows.find(
+            if (this.storeService.discuss?.chatWindows) {
+                const chatWindow = this.storeService.discuss.chatWindows.find(
                     window => window.thread?.eq(thread)
                 );
                 if (chatWindow) {
-                    this.store.ChatWindow.get({ thread })?.close();
+                    this.storeService.ChatWindow.get({ thread })?.close();
                 }
             }
 
