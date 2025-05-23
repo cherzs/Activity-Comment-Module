@@ -2,44 +2,54 @@
 
 import { Activity } from "@mail/core/web/activity";
 import { patch } from "@web/core/utils/patch";
-import { useState, useRef, onWillStart, onMounted } from "@odoo/owl";
+import { useState, useRef, onWillStart, onMounted, onWillUnmount } from "@odoo/owl";
 import { useService } from "@web/core/utils/hooks";
 import { Thread } from "@mail/core/common/thread";
 import { Composer } from "@mail/core/common/composer";
 import { _t } from "@web/core/l10n/translation";
+import { browser } from "@web/core/browser/browser";
+import { usePopover } from "@web/core/popover/popover_hook";
+import { FileUploader } from "@web/views/fields/file_handler";
+import { ActivityMailTemplate } from "@mail/core/web/activity_mail_template";
+import { ActivityMarkAsDone } from "@mail/core/web/activity_markasdone_popover";
+import { AvatarCardPopover } from "@mail/discuss/web/avatar_card/avatar_card_popover";
+import { computeDelay, getMsToTomorrow } from "@mail/utils/common/dates";
+import { useAttachmentUploader } from "@mail/core/common/attachment_uploader_hook";
+import { rpc } from "@web/core/network/rpc";
+import { markup } from "@odoo/owl";
 
-// Patch the Activity component to add Thread to its components
+
 patch(Activity, {
-    components: Object.assign({}, Activity.components, { Thread, Composer })
+    components: Object.assign({}, Activity.components, { 
+        Thread, 
+        Composer,
+        ActivityMailTemplate,
+        FileUploader,
+        ActivityMarkAsDone,
+        AvatarCardPopover
+    }),
+    props: [
+        "activity",
+        "onActivityChanged",
+        "reloadParentView",
+        "data?"
+    ],
+    template: "mail.Activity"
 });
 
-// First patch the base Activity component to handle mail services
 patch(Activity.prototype, {
     setup() {
         super.setup();
-        this.store = useService("mail.store");
+        this.storeService = useService("mail.store");
+        this.orm = useService("orm");
         
-        // Only initialize mail services if we're in a private context
-        if (!this.store.inPublicPage) {
-            try {
-                this.threadService = useService("mail.thread");
-            } catch (error) {
-                console.warn("Mail services not available:", error);
-                this.threadService = null;
-            }
-        }
-    }
-});
-
-// Then patch our specific implementation
-patch(Activity.prototype, {
-    setup() {
-        super.setup();
-        this.state = useState({
+        this.state = useState({ 
+            showDetails: false,
             showComments: false,
             thread: null,
             threadRecord: null,
             commentCount: 0,
+            comments: [],
             texts: {
                 addComment: _t(" Add a Comment"),
                 hideComments: _t(" Hide Comments"),
@@ -48,48 +58,111 @@ patch(Activity.prototype, {
             }
         });
 
+        this.markDonePopover = usePopover(ActivityMarkAsDone, { position: "right" });
+        this.avatarCard = usePopover(AvatarCardPopover);
+        
         this.commentRef = useRef('commentPanel');
-        this.orm = useService("orm");
+
+        this.attachmentUploader = useAttachmentUploader(this.thread);
 
         onWillStart(async () => {
-            if (this.props.data && 
-                this.props.data.id && 
-                !this.store.inPublicPage && 
-                this.threadService) {
+            console.log("[ActivityCommentPanel] props.activity:", this.props.activity);
+            if (this.props.activity && 
+                this.props.activity.id && 
+                !this.storeService.inPublicPage) {
                 try {
-                    // Check if a thread record exists for this activity
+                    if (!this.props.activity.res_model || !this.props.activity.res_id) {
+                        throw new Error('Missing required field for thread creation: res_model or res_id');
+                    }
+                    const res_id = getResId(this.props.activity.res_id);
+                    if (res_id === null) {
+                        throw new Error('Invalid res_id value: must be a valid integer');
+                    }
+
                     const threadRecords = await this.orm.searchRead(
                         'mail.activity.thread',
-                        [['activity_id', '=', this.props.data.id]],
+                        [['activity_id', '=', this.props.activity.id]],
                         ['id']
                     );
+                    if (this.__owl__ && this.__owl__.isDestroyed) return;
 
                     let threadId;
 
                     if (threadRecords.length === 0) {
-                        // Create a new thread record if none exists
-                        // orm.create returns an array of IDs, take the first one
                         const newThreadIds = await this.orm.create('mail.activity.thread', [{
-                            activity_id: this.props.data.id,
-                            res_model: this.props.data.res_model,
-                            res_id: this.props.data.res_id,
+                            activity_id: this.props.activity.id,
+                            res_model: this.props.activity.res_model,
+                            res_id: res_id,
                         }]);
-                        threadId = newThreadIds[0]; // Get the first ID from the returned array
+                        if (this.__owl__ && this.__owl__.isDestroyed) return;
+                        threadId = newThreadIds[0];
                     } else {
                         threadId = threadRecords[0].id;
                     }
 
-                    // Get the thread for our custom model
-                    this.state.thread = this.threadService.getThread('mail.activity.thread', threadId);
-                    await this.threadService.loadAround(this.state.thread);
-                    this.state.threadRecord = threadId;
+                    const thread = this.storeService.Thread.insert({
+                        model: 'mail.activity.thread',
+                        id: threadId
+                    });
+                    if (this.__owl__ && this.__owl__.isDestroyed) return;
+                    this.state.thread = thread;
 
-                    // Get comment count
-                    if (this.state.thread && this.state.thread.messages) {
-                        const validMessages = this.state.thread.messages.filter(
-                            msg => msg && msg.body && msg.body.trim() !== ''
-                        );
-                        this.state.commentCount = validMessages.length;
+                    await this.storeService.Thread.getOrFetch({
+                        model: 'mail.activity.thread',
+                        id: threadId
+                    });
+                    if (this.__owl__ && this.__owl__.isDestroyed) return;
+
+                    if (!thread.composer) {
+                        thread.composer = this.storeService.Composer.insert({
+                            thread: thread,
+                            type: 'note',
+                            mode: 'extended'
+                        });
+                    }
+
+                    console.log('FETCH THREAD MESSAGES', { thread_id: threadId, thread_model: "mail.activity.thread" });
+                    const messages = await rpc("/mail/thread/messages", {
+                        thread_id: threadId,
+                        thread_model: "mail.activity.thread",
+                    });
+                    if (this.__owl__ && this.__owl__.isDestroyed) return;
+                    console.log('FETCHED MESSAGES RESULT', messages);
+
+                    if (messages && messages.messages) {
+                        let messageObjs = messages.messages;
+                        if (typeof messageObjs[0] === 'number' || typeof messageObjs[0] === 'string') {
+                            messageObjs = await this.orm.searchRead(
+                                'mail.message',
+                                [['id', 'in', messageObjs]],
+                                ['id', 'body', 'author_id', 'email_from', 'create_date', 'message_type']
+                            );
+                            if (this.__owl__ && this.__owl__.isDestroyed) return;
+                        }
+                        for (const message of messageObjs) {
+                            this.storeService.Message.insert({
+                                ...message,
+                                thread: this.state.thread,
+                            });
+                        }
+                        this.state.threadRecord = threadId;
+                        this._updateCommentCount();
+
+                        if (this.state.comments.length === 0) {
+                            this.state.comments = messageObjs.filter(
+                                msg => msg.body && msg.body.trim() !== ''
+                            ).map(msg => ({
+                                ...msg,
+                                body: markup(msg.body),
+                                author: msg.author_id
+                                    ? { id: msg.author_id[0], name: msg.author_id[1], avatar_128: msg.author_id[2] }
+                                    : { name: msg.email_from || "Unknown" },
+                                avatarColor: "#e1eaff",
+                                avatarUrl: (msg.author_id && msg.author_id[0]) ? `/web/image/res.partner/${msg.author_id[0]}/image_1920` : null,
+                            }));
+                            this.state.comments.sort((a, b) => new Date(a.create_date) - new Date(b.create_date));
+                        }
+
                     }
 
                 } catch (error) {
@@ -99,75 +172,97 @@ patch(Activity.prototype, {
         });
 
         onMounted(() => {
+            this.updateDelayAtNight();
             this._checkSessionStorage();
-            this._setupMessageListener();
+        });
+
+        onWillUnmount(() => {
+            browser.clearTimeout(this.updateDelayMidnightTimeout);
+        });
+    },
+
+    get thread() {
+        if (this.state.thread) {
+            return this.state.thread;
+        }
+        return this.storeService.Thread.insert({
+            model: this.props.activity.res_model,
+            id: getResId(this.props.activity.res_id),
         });
     },
 
     toggleComments() {
         this.state.showComments = !this.state.showComments;
         if (!this.state.showComments) {
-            // Get comment count
-            if (this.state.thread && this.state.thread.messages) {
-                const validMessages = this.state.thread.messages.filter(
-                    msg => msg && msg.body && msg.body.trim() !== ''
-                );
-                this.state.commentCount = validMessages.length;
-            }
+            this._updateCommentCount();
         }
     },
 
     getToggleText() {
         if (this.state.showComments) {
             return this.state.texts.hideComments;
-        } else if (this.state.commentCount > 0) {
-            return `${this.state.texts.seeComments} (${this.state.commentCount})`;
         } else {
-            return this.state.texts.addComment;
+            return `${this.state.texts.seeComments} (${this.state.commentCount})`;
         }
     },
 
-    _setupMessageListener() {
+    _updateCommentCount() {
         if (this.state.thread) {
-            // Create a reaction to track changes to thread messages
-            this.threadMessagesReaction = () => {
-                if (this.state.thread && this.state.thread.messages) {
-                    const validMessages = this.state.thread.messages.filter(
-                        msg => msg && msg.body && msg.body.trim() !== ''
-                    );
-                    this.state.commentCount = validMessages.length;
-                }
-            };
-
-            // Set up initial count
-            this.threadMessagesReaction();
+            const messages = this.storeService.Message.records;
+            const threadMessages = Object.values(messages).filter(
+                msg =>
+                    msg.thread &&
+                    msg.thread.id === this.state.thread.id &&
+                    msg.message_type === 'comment' &&
+                    msg.body && msg.body.trim() !== ''
+            );
+            this.state.commentCount = threadMessages.length;
         }
     },
 
     _checkSessionStorage() {
         try {
-            // Check if we have stored thread info in session storage
             const storedInfo = sessionStorage.getItem('open_activity_comments');
             if (storedInfo) {
                 const threadInfo = JSON.parse(storedInfo);
 
-                // Check if this is for our activity
                 if (threadInfo &&
                     threadInfo.threadModel === 'mail.activity.thread' &&
                     threadInfo.activityId &&
-                    threadInfo.activityId === this.props.data.id) {
+                    threadInfo.activityId === this.props.activity.id) {
 
-                    // Open the comments section
                     if (!this.state.showComments) {
                         this.toggleComments();
                     }
 
-                    // Clear the storage so it doesn't keep opening
                     sessionStorage.removeItem('open_activity_comments');
                 }
             }
         } catch (error) {
             console.error("Error checking session storage:", error);
         }
-    }
+    },
 });
+
+
+function getResId(val) {
+    if (val === undefined || val === null) {
+        return null;
+    }
+    if (typeof val === 'number') {
+        return val;
+    }
+    if (Array.isArray(val)) {
+        const firstVal = val[0];
+        if (typeof firstVal === 'number') {
+            return firstVal;
+        }
+        const parsed = parseInt(firstVal, 10);
+        return isNaN(parsed) ? null : parsed;
+    }
+    if (typeof val === 'string') {
+        const parsed = parseInt(val, 10);
+        return isNaN(parsed) ? null : parsed;
+    }
+    return null;
+}

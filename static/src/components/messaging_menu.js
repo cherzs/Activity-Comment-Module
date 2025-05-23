@@ -6,22 +6,48 @@ import { useService } from "@web/core/utils/hooks";
 import { _t } from "@web/core/l10n/translation";
 import { useState } from "@odoo/owl";
 
+// Add a defensive utility to always get a single string res_id (or resId) (insert near the top of the file, e.g. after imports)
+function getResId(val) {
+    if (val === undefined || val === null) {
+        return null;
+    }
+    // If it's already a number, return it
+    if (typeof val === 'number') {
+        return val;
+    }
+    // If it's an array/tuple, take the first element and convert to number
+    if (Array.isArray(val)) {
+        const firstVal = val[0];
+        if (typeof firstVal === 'number') {
+            return firstVal;
+        }
+        const parsed = parseInt(firstVal, 10);
+        return isNaN(parsed) ? null : parsed;
+    }
+    // If it's a string, try to convert to number
+    if (typeof val === 'string') {
+        const parsed = parseInt(val, 10);
+        return isNaN(parsed) ? null : parsed;
+    }
+    return null;
+}
+
 patch(MessagingMenu.prototype, {
     setup() {
-        // Panggil setup asli terlebih dahulu
+        // Call original setup first
         super.setup();
         
-        // Gunakan useState untuk store seperti di implementasi asli
+        // Use useState for store as in original implementation
         this.storeService = useState(useService("mail.store"));
         this.action = useService("action");
         this.orm = useService("orm");
         
-        // Tambahkan state untuk menangani activity thread
+        // Add state to handle activity thread
         Object.assign(this.state, {
             activityThreadInfo: null,
         });
 
-        // Inisialisasi service tambahan jika diperlukan
+        // Initialize additional service if needed
         if (!this.storeService.inPublicPage) {
             try {
                 this.storeService = useService("mail.store");
@@ -32,19 +58,19 @@ patch(MessagingMenu.prototype, {
     },
 
     get threads() {
-        // Gunakan implementasi asli sebagai base
+        // Use original implementation as base
         const baseThreads = super.threads;
         if (!baseThreads) {
             return [];
         }
 
-        // Filter thread sesuai kebutuhan
+        // Filter thread as needed
         return baseThreads.filter(thread => {
-            // Tambahkan filter untuk activity thread
+            // Add filter for activity thread
             if (thread.model === 'mail.activity.thread') {
                 return thread.needactionMessages?.length > 0;
             }
-            // Filter thread lainnya
+            // Filter other threads
             return thread.needactionMessages?.length > 0;
         });
     },
@@ -54,7 +80,7 @@ patch(MessagingMenu.prototype, {
             return;
         }
 
-        // Mark as read seperti implementasi asli
+        // Mark as read as in original implementation
         if (thread.needactionMessages?.length > 0) {
             this.markAsRead(thread);
         }
@@ -75,7 +101,11 @@ patch(MessagingMenu.prototype, {
                 }
 
                 resModel = threadRecord.res_model;
-                resId = parseInt(threadRecord.res_id);
+                const parsedResId = getResId(threadRecord.res_id);
+                if (parsedResId === null) {
+                    throw new Error('Invalid res_id value: must be a valid integer');
+                }
+                resId = parsedResId;
                 
                 threadInfo = {
                     threadModel: 'mail.activity.thread',
@@ -84,14 +114,14 @@ patch(MessagingMenu.prototype, {
                     activityDoneMessageId: threadRecord.activity_done_message_id?.[0]
                 };
 
-                // Simpan info thread ke state
+                // Save thread info to state
                 this.state.activityThreadInfo = threadInfo;
                 
-                // Simpan ke session storage untuk akses di komponen lain
+                // Save to session storage for access by other components
                 sessionStorage.setItem('open_activity_comments', JSON.stringify(threadInfo));
             }
 
-            // Buka form view seperti implementasi asli
+            // Open form view as in original implementation
             const action = {
                 type: "ir.actions.act_window",
                 res_model: resModel || thread.model,
@@ -104,10 +134,10 @@ patch(MessagingMenu.prototype, {
                 }
             };
 
-            // Gunakan action service seperti di implementasi asli
+            // Use action service as in original implementation
             await this.action.doAction(action);
 
-            // Tutup chat window jika ada
+            // Close chat window if exists
             if (this.storeService.discuss?.chatWindows) {
                 const chatWindow = this.storeService.discuss.chatWindows.find(
                     window => window.thread?.eq(thread)
@@ -122,11 +152,11 @@ patch(MessagingMenu.prototype, {
 
         } catch (error) {
             console.error("Failed to open discussion:", error);
-            // Tambahkan notifikasi error jika diperlukan
+            // Add error notification if needed
         }
     },
 
-    // Override method markAsRead untuk menangani activity thread
+    // Override method markAsRead to handle activity thread
     markAsRead(thread) {
         if (thread.model === 'mail.activity.thread') {
             // Handle marking activity thread as read
@@ -134,7 +164,7 @@ patch(MessagingMenu.prototype, {
                 thread.markAllMessagesAsRead();
             }
         } else {
-            // Gunakan implementasi asli untuk thread lainnya
+            // Use original implementation for other threads
             super.markAsRead(thread);
         }
     }
