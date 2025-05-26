@@ -24,9 +24,9 @@ class ActivityThread(models.Model):
         index=True
     )
 
-    res_model = fields.Char(string='ResModel')
+    res_model = fields.Char(string='ResModel', required=True)
+    res_id = fields.Integer(string='ResId', required=True)
     message_ids = fields.One2many('mail.message', 'res_id', string='Messages', domain=[('model', '=', 'mail.activity.thread')])
-    res_id = fields.Char(string='ResId')
 
     name = fields.Char(string='Name')
 
@@ -48,14 +48,22 @@ class ActivityThread(models.Model):
                    mail_create_nolog=True)  # Don't log creation
         self = self.with_context(ctx)
 
+        # Convert res_id to integer if it's a string
+        for vals in vals_list:
+            if 'res_id' in vals and isinstance(vals['res_id'], str):
+                try:
+                    vals['res_id'] = int(vals['res_id'])
+                except (ValueError, TypeError):
+                    raise ValueError(f"Invalid res_id value: {vals['res_id']}. Must be a valid integer.")
+
         records = super().create(vals_list)
         for record in records:
             # Set the name based on the activity
             if record.activity_id:
                 record.message_subscribe(partner_ids=[record.activity_id.user_id.partner_id.id])
                 record.name = record.activity_id.display_name
-            if record.activity_done_message_id:
-                record.message_subscribe(partner_ids=[record.activity_id.user_id.partner_id.id])
+            elif record.activity_done_message_id:
+                record.message_subscribe(partner_ids=[record.activity_done_message_id.author_id.partner_id.id])
                 record.name = record.activity_done_message_id.description
         return records
 

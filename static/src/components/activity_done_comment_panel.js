@@ -228,6 +228,30 @@ patch(Message.prototype, {
                             msg.body && msg.body.trim() !== ''
                     );
                     this.state.commentCount = threadMessages.length;
+                    
+                    // Update comments array with new messages
+                    const newComments = threadMessages.map(msg => ({
+                        ...msg,
+                        body: markup(msg.body),
+                        author: msg.author_id
+                            ? { id: msg.author_id[0], name: msg.author_id[1], avatar_128: msg.author_id[2] }
+                            : { name: msg.email_from || "Unknown" },
+                        avatarColor: "#e1eaff",
+                        avatarUrl: (msg.author_id && msg.author_id[0]) 
+                            ? `/web/image/res.partner/${msg.author_id[0]}/image_1920` 
+                            : null,
+                    }));
+                    
+                    // Sort comments by date
+                    newComments.sort((a, b) => new Date(a.create_date) - new Date(b.create_date));
+                    
+                    // Update state.comments while preserving reactivity
+                    this.state.comments.splice(0, this.state.comments.length, ...newComments);
+                    
+                    // If comments panel is open, scroll to bottom
+                    if (this.state.showComments && this.commentRef.el) {
+                        this.commentRef.el.scrollTop = this.commentRef.el.scrollHeight;
+                    }
                 }
             };
             this.threadMessagesReaction();
