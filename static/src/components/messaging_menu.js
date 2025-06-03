@@ -37,8 +37,8 @@ patch(MessagingMenu.prototype, {
         // Call original setup first
         super.setup();
         
-        // Use useState for store as in original implementation
-        this.storeService = useState(useService("mail.store"));
+        // Initialize services directly without useState wrapper
+        this.storeService = useService("mail.store");
         this.action = useService("action");
         this.orm = useService("orm");
         
@@ -46,15 +46,6 @@ patch(MessagingMenu.prototype, {
         Object.assign(this.state, {
             activityThreadInfo: null,
         });
-
-        // Initialize additional service if needed
-        if (!this.storeService.inPublicPage) {
-            try {
-                this.storeService = useService("mail.store");
-            } catch (error) {
-                console.warn("Mail services not available:", error);
-            }
-        }
     },
 
     get threads() {

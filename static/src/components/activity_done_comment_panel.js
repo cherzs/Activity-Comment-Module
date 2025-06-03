@@ -1,7 +1,7 @@
 /** @odoo-module **/
 import { Message } from "@mail/core/common/message";
 import { patch } from "@web/core/utils/patch";
-import { useState, useRef, onWillStart, onMounted, onWillUnmount } from "@odoo/owl";
+import { useState, useRef, onWillStart, onMounted, onWillUnmount, effect } from "@odoo/owl";
 import { useService } from "@web/core/utils/hooks";
 import { Thread } from "@mail/core/common/thread";
 import { Composer } from "@mail/core/common/composer";
@@ -38,9 +38,9 @@ function getResId(val) {
     return null;
 }
 
-patch(Message, {
-    components: Object.assign({}, Message.components, { Thread, Composer })
-});
+// patch(Message, {
+//     components: Object.assign({}, Message.components, { Thread, Composer })
+// });
 
 patch(Message.prototype, {
     async willStart() {
@@ -57,6 +57,7 @@ patch(Message.prototype, {
         super.setup();
         this.storeService = useService("mail.store");
         this.orm = useService("orm");
+        this.busService = useService("bus_service");
         this.state = useState({
             showComments: false,
             thread: null,
@@ -109,13 +110,13 @@ patch(Message.prototype, {
                         model: 'mail.activity.thread',
                         id: threadId
                     });
-                    if (!thread.composer) {
-                        thread.composer = this.storeService.Composer.insert({
-                            thread: thread,
-                            type: 'note',
-                            mode: 'extended'
-                        });
-                    }
+                    // if (!thread.composer) {
+                    //     thread.composer = this.storeService.Composer.insert({
+                    //         thread: thread,
+                    //         type: 'note',
+                    //         mode: 'extended'
+                    //     });
+                    // }
                     const messages = await rpc("/mail/thread/messages", {
                         thread_id: threadId,
                         thread_model: "mail.activity.thread",
@@ -137,7 +138,7 @@ patch(Message.prototype, {
                         }
                         this.state.threadRecord = threadId;
                         const newComments = messageObjs.filter(
-                            msg => msg.body && msg.body.trim() !== ''
+                            msg => (msg.body && msg.body.trim() !== '') || (msg.attachment_ids && msg.attachment_ids.length > 0)
                         ).map(msg => ({
                             ...msg,
                             body: markup(msg.body),
@@ -146,26 +147,33 @@ patch(Message.prototype, {
                                 : { name: msg.email_from || "Unknown" },
                             avatarColor: "#e1eaff",
                             avatarUrl: (msg.author_id && msg.author_id[0]) ? `/web/image/res.partner/${msg.author_id[0]}/image_1920` : null,
+                            formattedDate: formatDatetimeOdoo(msg.create_date),
                         }));
                         this.state.comments.splice(0, this.state.comments.length, ...newComments);
                         this.state.comments.sort((a, b) => new Date(a.create_date) - new Date(b.create_date));
                         this._updateCommentCount();
                     }
+                    this._updateCommentsFromStore();
                 } catch (error) {
-                    console.error("Failed to initialize activity thread:", error);
+                    // console.error("Failed to initialize activity thread:", error);
                 }
             }
         });
 
         onMounted(() => {
             this._checkSessionStorage();
-            this._setupMessageListener();
+            this._setupBusListeners();
+            this.env.bus.addEventListener("activity_comment_posted", this._onActivityCommentPosted.bind(this));
         });
 
         onWillUnmount(() => {
             if (this.threadMessagesReaction) {
                 this.threadMessagesReaction();
             }
+            if (this.busService) {
+                this.busService.removeEventListener("notification", this._onBusNotification);
+            }
+            this.env.bus.removeEventListener("activity_comment_posted", this._onActivityCommentPosted.bind(this));
         });
     },
 
@@ -240,6 +248,7 @@ patch(Message.prototype, {
                         avatarUrl: (msg.author_id && msg.author_id[0]) 
                             ? `/web/image/res.partner/${msg.author_id[0]}/image_1920` 
                             : null,
+                        formattedDate: formatDatetimeOdoo(msg.create_date),
                     }));
                     
                     // Sort comments by date
@@ -277,7 +286,7 @@ patch(Message.prototype, {
                 }
             }
         } catch (error) {
-            console.error("Error checking session storage:", error);
+            // console.error("Error checking session storage:", error);
         }
     },
 
@@ -300,8 +309,144 @@ patch(Message.prototype, {
                 }, 100);
             }
         } catch (error) {
-            console.error("Error scrolling message into view:", error);
+            // console.error("Error scrolling message into view:", error);
+        }
+    },
+
+    _setupBusListeners() {
+        this.busService.addEventListener("notification", this._onBusNotification.bind(this));
+    },
+
+    _onBusNotification(notifications) {
+        for (const { payload, type } of notifications) {
+            if (type === "mail.message/new" && this.state.thread) {
+                if (payload.res_id === this.state.thread.id && payload.model === this.state.thread.model) {
+                    this._updateCommentsFromStore();
+                }
+            }
+        }
+    },
+
+    _onActivityCommentPosted(ev) {
+        const { threadId, threadModel } = ev.detail;
+        if (this.state.thread && this.state.thread.id === threadId && this.state.thread.model === threadModel) {
+            this._updateCommentsFromStore();
+        }
+    },
+
+    async _updateCommentsFromStore() {
+        if (!this.state.thread) return;
+        try {
+            const messages = await rpc("/mail/thread/messages", {
+                thread_id: this.state.thread.id,
+                thread_model: "mail.activity.thread",
+            });
+            if (this.__owl__ && this.__owl__.isDestroyed) return;
+            if (messages && messages.messages) {
+                let messageObjs = messages.messages;
+                if (typeof messageObjs[0] === 'number' || typeof messageObjs[0] === 'string') {
+                    messageObjs = await this.orm.searchRead(
+                        'mail.message',
+                        [['id', 'in', messageObjs]],
+                        ['id', 'body', 'author_id', 'email_from', 'create_date', 'message_type']
+                    );
+                    if (this.__owl__ && this.__owl__.isDestroyed) return;
+                }
+                for (const message of messageObjs) {
+                    this.storeService.Message.insert({
+                        ...message,
+                        thread: this.state.thread,
+                    });
+                }
+                const threadMessages = messageObjs.filter(
+                    msg => (msg.body && msg.body.trim() !== '') || (msg.attachment_ids && msg.attachment_ids.length > 0)
+                );
+                this.state.commentCount = threadMessages.length;
+                const newComments = threadMessages.map(msg => ({
+                    ...msg,
+                    body: markup(msg.body),
+                    author: msg.author_id
+                        ? { id: msg.author_id[0], name: msg.author_id[1], avatar_128: msg.author_id[2] }
+                        : { name: msg.email_from || "Unknown" },
+                    avatarColor: "#e1eaff",
+                    avatarUrl: (msg.author_id && msg.author_id[0])
+                        ? `/web/image/res.partner/${msg.author_id[0]}/image_1920`
+                        : null,
+                    formattedDate: formatDatetimeOdoo(msg.create_date),
+                }));
+                newComments.sort((a, b) => new Date(a.create_date) - new Date(b.create_date));
+                this.state.comments.splice(0, this.state.comments.length, ...newComments);
+                if (this.state.showComments && this.commentRef.el) {
+                    this.commentRef.el.scrollTop = this.commentRef.el.scrollHeight;
+                }
+            }
+        } catch (error) {
+            // console.error("Failed to fetch comments for done activity:", error);
         }
     },
 
 });
+
+patch(Composer.prototype, {
+    async sendMessage(...args) {
+        const result = await super.sendMessage(...args);
+        this.env.bus.trigger("activity_comment_posted", {
+            threadId: this.props.composer.thread.id,
+            threadModel: this.props.composer.thread.model,
+        });
+        return result;
+    }
+});
+
+
+function getCookie(name) {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) return parts.pop().split(';').shift();
+    return null;
+}
+
+function formatDatetimeOdoo(dt) {
+    if (!dt) return '';
+    let date;
+    if (typeof dt === 'string') {
+        // if format Odoo (YYYY-MM-DD HH:mm:ss), add 'Z' to be considered UTC
+        if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(dt)) {
+            date = new Date(dt.replace(' ', 'T') + 'Z');
+        } else {
+            date = new Date(dt);
+        }
+    } else {
+        date = dt;
+    }
+    if (!(date instanceof Date) || isNaN(date)) return '';
+
+    // Get timezone from cookie
+    const tz = getCookie('tz') || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+    // Convert UTC to local user time (with Intl)
+    const now = new Date();
+    // For relative time, still use UTC, because Date.now() is also UTC
+    const diffMs = now - date;
+    const diffSec = Math.floor(diffMs / 1000);
+
+    if (diffSec < 60) return 'just now';
+    if (diffSec < 3600) {
+        const mins = Math.floor(diffSec / 60);
+        return mins === 1 ? '1 minute ago' : `${mins} minutes ago`;
+    }
+    if (diffSec < 86400) {
+        const hours = Math.floor(diffSec / 3600);
+        return hours === 1 ? '1 hour ago' : `${hours} hours ago`;
+    }
+    if (diffSec < 2592000) {
+        const days = Math.floor(diffSec / 86400);
+        return days === 1 ? '1 day ago' : `${days} days ago`;
+    }
+    // For absolute date, show according to user timezone
+    return new Intl.DateTimeFormat('default', {
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+        timeZone: tz
+    }).format(date);
+}
