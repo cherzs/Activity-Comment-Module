@@ -63,8 +63,8 @@ class ActivityThread(models.Model):
                 record.message_subscribe(partner_ids=[record.activity_id.user_id.partner_id.id])
                 record.name = record.activity_id.display_name
             elif record.activity_done_message_id:
-                record.message_subscribe(partner_ids=[record.activity_done_message_id.author_id.partner_id.id])
-                record.name = record.activity_done_message_id.description
+                record.message_subscribe(partner_ids=[record.activity_done_message_id.author_id.id])
+                record.name = record.activity_done_message_id.body or "Activity Done"
         return records
 
     # Method to link activity thread to the done message when activity is completed
