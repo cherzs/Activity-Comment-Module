@@ -22,26 +22,30 @@
                      class="o_activity_comments_container" 
                      t-ref="commentPanel" 
                      style="background-color: #e7e9ed; border-radius: 6px; padding: 18px 16px 12px 16px;">
-                     <Thread 
-                        thread="state.thread"
-                        order="'asc'"
-                        showEmptyMessage="false"
-                        showJumpPresent="false"
-                        showDates="false"
-                    />
-                    <div class="o_activity_comments_composer" style="background: #f0f2f5; border-radius: 8px; padding: 10px 12px">
-                        <Composer
-                            placeholder="state.texts.addCommentPlaceholder"
-                            composer="state.thread.composer"
-                            type="'note'"
-                            showFullComposer="false"
-                            mode="'extended'"
-                            allowUpload="true"
+                    <t t-if="state.thread">
+                        <Thread 
+                            thread="state.thread"
+                            order="'asc'"
+                            showEmptyMessage="false"
+                            showJumpPresent="false"
+                            showDates="false"
                         />
-                    </div>
-                    <div class="o_activity_comments_no_comments" t-if="!state.thread" style="text-align: center; color: #666; padding: 12px;">
-                        No comments yet
-                    </div>
+                        <div class="o_activity_comments_composer" style="background: #f0f2f5; border-radius: 8px; padding: 10px 12px">
+                            <Composer
+                                placeholder="state.texts.addCommentPlaceholder"
+                                composer="state.thread.composer"
+                                type="'note'"
+                                showFullComposer="false"
+                                mode="'extended'"
+                                allowUpload="true"
+                            />
+                        </div>
+                    </t>
+                    <t t-else="">
+                        <div class="o_activity_comments_no_comments" style="text-align: center; color: #666; padding: 12px;">
+                            No comments yet
+                        </div>
+                    </t>
                 </div>
             </div>
         </xpath>

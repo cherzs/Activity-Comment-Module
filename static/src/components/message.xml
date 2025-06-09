@@ -19,116 +19,15 @@
                          t-ref="commentPanel" 
                          style="background-color: #e7e9ed; border-radius: 6px; padding: 18px 16px 12px 16px; margin-bottom: 12px;">
                         <!-- Render comments above composer -->
-                        <div t-if="state.comments.length" class="o_activity_comments_list">
-                            <t t-foreach="state.comments" t-as="comment" t-key="comment.id">
-                                <div class="o-mail-Thread" style="display: flex; align-items: flex-start; margin-bottom: 5px;">
-                                    <div style="width: 36px; height: 36px; border-radius: 6px; background: [[ comment.avatarColor ]]; color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 18px; margin-right: 12px; flex-shrink: 0; border: 1px solid #e0e3ea;">
-                                        <t t-if="comment.avatarUrl">
-                                            <img t-att-src="comment.avatarUrl" style="width:36px;height:36px;border-radius:6px;object-fit:cover;"/>
-                                        </t>
-                                        <t t-else="">
-                                            <t t-if="comment.author &amp;&amp; comment.author.name" t-esc="comment.author.name[0].toUpperCase()"/>
-                                            <t t-if="!comment.author || !comment.author.name">?</t>
-                                        </t>
-                                    </div>
-                                    <div style="flex: 1; min-width: 0;">
-                                        <t t-if="comment.id == state.editingCommentId and state.editingComposer">
-                                            <div class="position-relative flex-grow-1">
-                                                <t t-set="inputClasses" t-value="'form-control rounded-3 px-3 py-2 border-primary shadow-none'" />
-                                                <textarea
-                                                    t-ref="textarea"
-                                                    t-att-class="inputClasses"
-                                                    t-model="state.editingComposer.textInput"
-                                                    t-att-placeholder="placeholder"
-                                                    t-att-readOnly="!state.active"
-                                                    t-on-keydown="onKeydown"
-                                                    t-on-focusin="onFocusin"
-                                                    t-on-focusout="onFocusout"
-                                                    t-on-click="(ev) => markEventHandled(ev, 'composer.onClickTextarea')"
-                                                    t-on-paste="onPaste"
-                                                    style="min-height: 38px; resize: none; width: 100%;"
-                                                />
-                                            </div>
-                                            <button class="btn btn-primary btn-sm" t-on-click="saveEditComment">Save</button>
-                                            <button class="btn btn-link btn-sm" t-on-click="cancelEditComment">Cancel</button>
-                                            <div class="text-muted o-xsmaller mt-1">
-                                                Escape to <span class="text-decoration-underline" t-on-click="cancelEditComment">cancel</span>, CTRL-Enter to <span class="text-decoration-underline" t-on-click="saveEditComment">save</span>
-                                            </div>
-                                        </t>
-                                        <t t-else="">
-                                            <div style="font-weight: bold; color: #444; font-size: 15px;" class="d-flex align-items-center justify-content-between">
-                                                <div>
-                                                    <span t-if="comment.author" t-esc="comment.author.name"/>
-                                                    <span t-if="comment.formattedDate" class="o-mail-Message-date o-xsmaller" style="margin-left: 4px;">- <t t-esc="comment.formattedDate"/></span>
-                                                </div>
-                                                <div>
-                                                    <div class="dropdown d-inline-block ms-2">
-                                                        <button class="btn btn-sm btn-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                                            <i class="fa fa-ellipsis-v"/>
-                                                        </button>
-                                                        <div class="dropdown-menu">
-                                                            <li>
-                                                                <!-- <a class="dropdown-item" t-on-click="onEditComment(comment)">
-                                                                    <i class="fa fa-pencil"/> Edit
-                                                                </a> -->
-                                                            </li>
-                                                            <li>
-                                                                <a class="dropdown-item text-danger" t-on-click="deleteComment" t-att-data-id="comment.id">
-                                                                    <i class="fa fa-trash"/> Delete
-                                                                </a>
-                                                            </li>
-                                                            <li>
-                                                                <a class="dropdown-item" t-on-click="copyLink" t-att-data-id="comment.id">
-                                                                    <i class="fa fa-link"/> Copy Link
-                                                                </a>
-                                                            </li>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <div style="font-size: 14px; color: #222; margin: 4px 0;">
-                                                <span t-out="comment.body"/>
-                                                <t t-if="comment.attachments and comment.attachments.length > 0">
-                                                    <ul style="margin: 4px 0 0 0; padding: 0; list-style: none;">
-                                                        <t t-foreach="comment.attachments" t-as="att" t-key="att.id">
-                                                            <li style="display: inline-block; margin-right: 8px;">
-                                                                <t t-if="att.mimetype and att.mimetype.startsWith('image/')">
-                                                                    <div style="position: relative; display: inline-block;">
-                                                                        <img t-att-src="att.url"
-                                                                             style="max-width: 320px; max-height: 320px; border-radius: 8px; border: 1px solid #ccc; cursor: pointer;"
-                                                                             t-on-click="showImagePreview"
-                                                                             t-att-data-id="att.id"/>
-                                                                        <div class="dropdown" style="position: absolute; top: 8px; right: 8px;">
-                                                                            <button class="btn btn-sm btn-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
-                                                                                <i class="fa fa-chevron-down"/>
-                                                                            </button>
-                                                                            <ul class="dropdown-menu">
-                                                                                <li>
-                                                                                    <a class="dropdown-item text-danger" t-on-click="removeAttachment" t-att-data-id="att.id">
-                                                                                        <i class="fa fa-trash"/> Remove
-                                                                                    </a>
-                                                                                </li>
-                                                                                <li>
-                                                                                    <a class="dropdown-item" t-att-href="att.url" download="" t-att-title="'Download ' + att.name">
-                                                                                        <i class="fa fa-download"/> Download
-                                                                                    </a>
-                                                                                </li>
-                                                                            </ul>
-                                                                        </div>
-                                                                    </div>
-                                                                </t>
-                                                            </li>
-                                                        </t>
-                                                    </ul>
-                                                </t>
-                                            </div>
-                                        </t>
-                                    </div>
-                                </div>
-                            </t>
-                        </div>
-                        <div class="o_activity_comments_composer" style="background: #f0f2f5; border-radius: 8px; padding: 10px 12px; margin-top: 12px; margin-bottom: 12px;">
-                            <t t-if="state.thread and state.thread.composer">
+                        <t t-if="state.thread">
+                            <Thread 
+                                thread="state.thread"
+                                order="'asc'"
+                                showEmptyMessage="false"
+                                showJumpPresent="false"
+                                showDates="false"
+                            />
+                            <div class="o_activity_comments_composer" style="background: #f0f2f5; border-radius: 8px; padding: 10px 12px;">
                                 <Composer
                                     placeholder="state.texts.addCommentPlaceholder"
                                     composer="state.thread.composer"
@@ -137,47 +36,13 @@
                                     mode="'extended'"
                                     allowUpload="true"
                                 />
-                            </t>
-                            <t t-else="">
-                                <div class="text-muted p-2">Loading comment composer...</div>
-                            </t>
-                        </div>
-                        <div class="o_activity_comments_no_comments" t-if="!state.thread" style="text-align: center; color: #666; padding: 12px;">
-                            No comments yet
-                        </div>
-                    </div>
-                </div>
-            </t>
-        </xpath>
-        <xpath expr="//div[contains(@class, 'o_activity_comments_container') or contains(@class, 'o_Activity_comments_panel')]" position="inside">
-            <t t-if="state.showPreview">
-                <div class="o-FileViewer flex-column align-items-center d-flex w-100 h-100 position-fixed top-0 bottom-0 start-0 end-0" style="background: rgba(0,0,0,0.7); z-index: 9999;" t-on-click="closePreview">
-                    <!-- Header -->
-                    <div class="o-FileViewer-header position-absolute top-0 d-flex w-100" style="z-index: 10001;">
-                        <div class="d-flex align-items-center ms-4 overflow-auto">
-                            <span class="text-truncate" t-esc="state.previewName"/>
-                        </div>
-                        <div class="flex-grow-1"></div>
-                        <div class="o-FileViewer-download o-FileViewer-headerButton d-flex align-items-center px-3 cursor-pointer" role="button" title="Download">
-                            <a class="text-reset d-flex align-items-baseline" download="" t-att-href="state.previewUrl">
-                                <i class="fa fa-download fa-fw me-1" role="img"></i>
-                                <span>Download</span>
-                            </a>
-                        </div>
-                        <div class="o-FileViewer-headerButton d-flex align-items-center mb-0 px-3 h4 text-reset cursor-pointer" role="button" title="Close (Esc)" aria-label="Close" t-on-click="closePreview">
-                            <i class="fa fa-fw fa-times" role="img"></i>
-                        </div>
-                    </div>
-                    <!-- Main Image -->
-                    <div class="o-FileViewer-main position-absolute top-0 bottom-0 start-0 end-0 align-items-center justify-content-center d-flex o_with_img overflow-hidden">
-                        <div class="o-FileViewer-zoomer position-absolute align-items-center justify-content-center d-flex w-100 h-100">
-                            <img class="o-FileViewer-view o-FileViewer-viewImage mw-100 mh-100 transition-base"
-                                 draggable="false"
-                                 alt="Viewer"
-                                 t-att-src="state.previewUrl"
-                                 t-on-click.stop="preventBubble"
-                                 style="transform: scale3d(1, 1, 1) rotate(0deg);max-height: 100%; max-width: 100%; border-radius: 12px; box-shadow: 0 2px 16px #0008;"/>
-                        </div>
+                            </div>
+                        </t>
+                        <t t-else="">
+                            <div class="o_activity_comments_no_comments" style="text-align: center; color: #666; padding: 12px;">
+                                No comments yet
+                            </div>
+                        </t>
                     </div>
                 </div>
             </t>

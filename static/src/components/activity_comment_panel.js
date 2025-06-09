@@ -85,21 +85,14 @@ patch(Activity.prototype, {
                         threadId = threadRecords[0].id;
                     }
 
-                    // Ensure thread is correctly inserted/fetched from store
                     this.state.thread = this.storeService.Thread.insert({
                         model: 'mail.activity.thread',
                         id: threadId,
-                        // Add any other necessary properties for the thread model here
                     });
                     
-                    // FIXED: Call fetchNewMessages directly on the thread instance.
-                    // Use toRaw to access the underlying non-reactive object for method calls if needed.
                     await toRaw(this.state.thread).fetchNewMessages(); 
                     this.state.threadRecord = threadId;
 
-                    // This might be redundant if fetchNewMessages already populates messages
-                    // You can consider removing this line if fetchNewMessages covers its purpose.
-                    // For now, keeping it as it doesn't cause harm and might ensure store consistency.
                     await this.storeService.Thread.getOrFetch({
                         model: 'mail.activity.thread',
                         id: threadId
@@ -108,7 +101,6 @@ patch(Activity.prototype, {
                     if (this.state.thread && this.state.thread.messages) {
                         let messageObjs = this.state.thread.messages;
                         if (typeof messageObjs[0] === 'number' || typeof messageObjs[0] === 'string') {
-                            // Fetch full message objects if only IDs are present
                             messageObjs = await this.orm.searchRead(
                                 'mail.message',
                                 [['id', 'in', messageObjs]],
@@ -134,26 +126,10 @@ patch(Activity.prototype, {
         });
 
         onMounted(() => {
-            this.updateDelayAtNight(); 
             this._checkSessionStorage();
-        });
-
-        onWillUnmount(() => {
-            browser.clearTimeout(this.updateDelayMidnightTimeout); 
-            if (this.busService) {
-                this.busService.removeEventListener("notification", this._onBusNotification); 
-            }
-            if (this.env.bus) {
-                this.env.bus.removeEventListener("activity_comment_posted", this._onActivityCommentPosted.bind(this)); 
-            }
-            // Clean up attachment uploader if it exists
-            if (this.attachmentUploader) {
-                this.attachmentUploader = null;
-            }
         });
     },
 
-    // --- Added missing or undefined methods based on their usage in the original code ---
     _updateCommentsFromStore() {
         if (this.state.thread) {
             const messages = this.storeService.Message.records;
@@ -166,21 +142,6 @@ patch(Activity.prototype, {
             this.state.comments = threadComments;
         }
     },
-
-    updateDelayAtNight() {
-        // Placeholder, define if needed.
-    },
-
-    _onBusNotification(notifications) {
-        // Placeholder, define if needed.
-    },
-
-    _onActivityCommentPosted(payload) {
-        if (payload.threadId === this.state.thread.id && payload.threadModel === this.state.thread.model) {
-            this._updateCommentCount();
-        }
-    },
-
 
     toggleComments() {
         this.state.showComments = !this.state.showComments;
@@ -254,18 +215,5 @@ patch(Activity.prototype, {
         } catch (error) {
             console.error("Error checking session storage:", error);
         }
-    }
-});
-
-patch(Composer.prototype, {
-    async sendMessage(...args) {
-        const result = await super.sendMessage(...args);
-        if (this.props.composer && this.props.composer.thread) {
-            this.env.bus.trigger("activity_comment_posted", {
-                threadId: this.props.composer.thread.id,
-                threadModel: this.props.composer.thread.model,
-            });
-        }
-        return result;
     }
 });
