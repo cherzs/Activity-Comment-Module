@@ -24,21 +24,11 @@ class ActivityThread(models.Model):
         index=True
     )
 
-    res_model = fields.Char(string='ResModel', required=True)
-    res_id = fields.Integer(string='ResId', required=True)
-    message_ids = fields.One2many('mail.message', 'res_id', string='Messages', domain=[('model', '=', 'mail.activity.thread')])
+    res_model = fields.Char(string='ResModel')
+    res_id = fields.Char(string='ResId')
 
     name = fields.Char(string='Name')
 
-    @api.model
-    def _get_composer_values(self, thread, composition_mode, **kwargs):
-        return {
-            'thread': thread,
-            'type': 'note',
-            'mode': composition_mode,
-            'res_model': self._name,
-            'res_id': thread.id,
-        }
     # Make sure when an activity is deleted, its thread is deleted as well
     @api.model_create_multi
     def create(self, vals_list):
@@ -48,23 +38,17 @@ class ActivityThread(models.Model):
                    mail_create_nolog=True)  # Don't log creation
         self = self.with_context(ctx)
 
-        # Convert res_id to integer if it's a string
-        for vals in vals_list:
-            if 'res_id' in vals and isinstance(vals['res_id'], str):
-                try:
-                    vals['res_id'] = int(vals['res_id'])
-                except (ValueError, TypeError):
-                    raise ValueError(f"Invalid res_id value: {vals['res_id']}. Must be a valid integer.")
-
         records = super().create(vals_list)
         for record in records:
-            # Set the name based on the activity
+            # Set the name based on the activity or message
             if record.activity_id:
                 record.message_subscribe(partner_ids=[record.activity_id.user_id.partner_id.id])
                 record.name = record.activity_id.display_name
             elif record.activity_done_message_id:
-                record.message_subscribe(partner_ids=[record.activity_done_message_id.author_id.id])
-                record.name = record.activity_done_message_id.body or "Activity Done"
+                # Use body instead of description since description doesn't exist
+                record.name = record.activity_done_message_id.body or _("Activity Done")
+                # Only subscribe if we have an activity_id (which we don't in this case)
+                # record.message_subscribe(partner_ids=[record.activity_id.user_id.partner_id.id])
         return records
 
     # Method to link activity thread to the done message when activity is completed
@@ -101,3 +85,41 @@ class ActivityThread(models.Model):
             })
             return thread
         return False
+
+    @api.model
+    def unlink(self):
+        """Override to ensure proper cleanup when threads are deleted"""
+        # Get all message IDs that will be affected
+        message_ids = self.mapped('activity_done_message_id').ids
+
+        # Call super to delete the threads
+        result = super().unlink()
+
+        # Notify the bus about deleted messages to update UI
+        if message_ids:
+            self.env['bus.bus']._sendone(
+                self.env.user.partner_id,
+                'mail.message/deleted',
+                {'message_ids': message_ids}
+            )
+
+        return result
+
+    @api.model
+    def _cleanup_orphaned_threads(self):
+        """Cleanup threads that have no messages and no activity"""
+        orphaned = self.search([
+            '|',
+            ('activity_id', '=', False),
+            ('activity_done_message_id', '=', False),
+            ('message_ids', '=', False)
+        ])
+        if orphaned:
+            orphaned.unlink()
+            return True
+        return False
+
+    @api.model
+    def _cron_cleanup_threads(self):
+        """Cron job to cleanup orphaned threads"""
+        self._cleanup_orphaned_threads()

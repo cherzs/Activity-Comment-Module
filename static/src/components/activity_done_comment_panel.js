@@ -1,7 +1,7 @@
 /** @odoo-module **/
 
 import { patch } from "@web/core/utils/patch";
-import { useState, onWillStart, onMounted } from "@odoo/owl";
+import { onWillStart, onMounted } from "@odoo/owl";
 import { useService } from "@web/core/utils/hooks";
 import { Thread } from "@mail/core/common/thread";
 import { Composer } from "@mail/core/common/composer";
@@ -17,22 +17,18 @@ patch(Message, {
 patch(Message.prototype, {
     setup() {
         super.setup();
+        this.state.showComments = false;
+        this.state.thread = null;
+        this.state.threadRecord = null;
+        this.state.commentCount = 0;
+        this.state.texts = {
+            addComment: _t(" Add a Comment"),
+            hideComments: _t(" Hide Comments"),
+            seeComments: _t(" See Comments"),
+            addCommentPlaceholder: _t("Add a Comment...")
+        };
         this.storeService = useService("mail.store");
         this.orm = useService("orm");
-        this.busService = useService("bus_service");
-        this.state = useState({
-            showComments: false,
-            thread: null,
-            threadRecord: null,
-            commentCount: 0,
-            comments: [],
-            texts: {
-                addComment: _t(" Add a Comment"),
-                hideComments: _t(" Hide Comments"),
-                seeComments: _t(" See Comments"),
-                addCommentPlaceholder: _t("Add a Comment...")
-            },
-        });
 
         onWillStart(async () => {
             if (this.props.message && this.props.message.id) {
