@@ -2,47 +2,26 @@
 
 import { Activity } from "@mail/core/web/activity";
 import { patch } from "@web/core/utils/patch";
-import { useState, onWillStart, onMounted, onWillUnmount } from "@odoo/owl";
+import { useState, onWillStart, onMounted } from "@odoo/owl";
 import { useService } from "@web/core/utils/hooks";
 import { Thread } from "@mail/core/common/thread";
 import { Composer } from "@mail/core/common/composer";
 import { _t } from "@web/core/l10n/translation";
-import { browser } from "@web/core/browser/browser";
-import { FileUploader } from "@web/views/fields/file_handler";
-import { ActivityMailTemplate } from "@mail/core/web/activity_mail_template";
-import { ActivityMarkAsDone } from "@mail/core/web/activity_markasdone_popover";
-import { AvatarCardPopover } from "@mail/discuss/web/avatar_card/avatar_card_popover";
-import { toRaw } from "@odoo/owl"; // Import toRaw
+import { toRaw } from "@odoo/owl";
 
 
 patch(Activity, {
-    components: Object.assign({}, Activity.components, { 
-        Thread, 
-        Composer,
-        ActivityMailTemplate,
-        FileUploader,
-        ActivityMarkAsDone,
-        AvatarCardPopover,
-    }),
-    props: [
-        "activity",
-        "onActivityChanged",
-        "reloadParentView",
-        "data?"
-    ],
-    template: "mail.Activity"
+    components: Object.assign({}, Activity.components, { Thread, Composer })
 });
 
 patch(Activity.prototype, {
     setup() {
         super.setup();
         
-        // Initialize all services first
         this.storeService = useService("mail.store");
         this.orm = useService("orm");
         this.busService = useService("bus_service");
         
-        // Initialize state
         this.state = useState({ 
             showDetails: false,
             showComments: false,
@@ -127,6 +106,7 @@ patch(Activity.prototype, {
 
         onMounted(() => {
             this._checkSessionStorage();
+            this._setupMessageListener();
         });
     },
 

@@ -6,7 +6,6 @@ import { useService } from "@web/core/utils/hooks";
 import { Thread } from "@mail/core/common/thread";
 import { Composer } from "@mail/core/common/composer";
 import { _t } from "@web/core/l10n/translation";
-import { markup } from "@odoo/owl";
 import { toRaw } from "@odoo/owl";
 import { Message } from "@mail/core/common/message";
 
