@@ -177,24 +177,3 @@ patch(Message.prototype, {
         return await Message.__super__.edit.call(this, body, attachments, options);
     }
 });
-
-// function cleanupOrphanThreadMessages(thread, storeService) {
-//     let threadMessageIds = [];
-//     if (thread && thread.messages) {
-//         if (Array.isArray(thread.messages)) {
-//             threadMessageIds = thread.messages;
-//         } else if (thread.messages.data) {
-//             threadMessageIds = thread.messages.data;
-//         }
-//     }
-//     const validIds = threadMessageIds.filter(id => {
-//         const key = typeof id === 'string' && id.startsWith('Message,') ? id : `Message,${id}`;
-//         return !!storeService.Message.records[key];
-//     });
-//     if (Array.isArray(thread.messages)) {
-//         thread.messages = validIds;
-//     } else if (thread.messages.data) {
-//         thread.messages.data = validIds;
-//     }
-//     console.log('After cleanup:', validIds, Object.keys(storeService.Message.records));
-// }
