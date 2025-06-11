@@ -5,7 +5,7 @@
             <t t-if="!props.message.parent_id">
                 <div class="o_activity_comment_panel_wrapper" style="margin-top: 8px; max-width: 100%; width: 563px;">
                     <span class="o-mail-Message-comment btn btn-link text-action p-0 me-3"
-                          t-if="props.message.body and (props.message.body.toLowerCase().includes('done') or props.message.body.toLowerCase().includes('terminée') or props.message.body.toLowerCase().includes('selesai'))"
+                          t-if="isDoneMessage(props.message.body)"
                           t-on-click="toggleComments"
                           style="margin-bottom: 5px;">
                         <i class="fa fa-commenting"/>

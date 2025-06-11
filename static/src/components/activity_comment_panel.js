@@ -194,23 +194,4 @@ patch(Activity.prototype, {
             console.error("Error checking session storage:", error);
         }
     },
-
-    async edit(body, attachments = [], options = {}) {
-        if (!body || body.trim() === '' || body === '<span class="o-mail-Message-edited"></span>') {
-            await this.store.env.services.orm.unlink('mail.message', [this.id]);
-            if (this.state.thread && this.state.thread.messages) {
-                if (Array.isArray(this.state.thread.messages)) {
-                    this.state.thread.messages = this.state.thread.messages.filter(id => id !== this.id && id !== `Message,${this.id}`);
-                } else if (this.state.thread.messages.data) {
-                    this.state.thread.messages.data = this.state.thread.messages.data.filter(id => id !== this.id && id !== `Message,${this.id}`);
-                }
-            }
-            delete this.storeService.Message.records[`Message,${this.id}`];
-            if (this.state.thread && typeof this.state.thread._notify === 'function') {
-                this.state.thread._notify();
-            }
-            return;
-        }
-        return await Message.__super__.edit.call(this, body, attachments, options);
-    }
 });

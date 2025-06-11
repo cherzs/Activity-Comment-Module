@@ -87,6 +87,14 @@ patch(Message.prototype, {
             this._setupMessageListener();
             this._checkSessionStorage();
         });
+
+        // Check function done message
+        this.isDoneMessage = function(body) {
+            if (!body) return false;
+            const doneKeywords = ['done', 'terminée', 'selesai'];
+            const lower = body.toLowerCase();
+            return doneKeywords.some(word => lower.includes(word));
+        };
     },
 
     _updateCommentCount() {
@@ -159,7 +167,7 @@ patch(Message.prototype, {
     },
 
     async edit(body, attachments = [], options = {}) {
-        if (!body || body.trim() === '' || body === '<span class="o-mail-Message-edited"></span>') {
+        if (!body || (typeof body === 'string' && body.trim() === '')) {
             await this.store.env.services.orm.unlink('mail.message', [this.id]);
             if (this.state.thread && this.state.thread.messages) {
                 if (Array.isArray(this.state.thread.messages)) {
