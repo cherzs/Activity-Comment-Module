@@ -86,9 +86,6 @@ patch(Message.prototype, {
         onMounted(() => {
             this._setupMessageListener();
             this._checkSessionStorage();
-            document.querySelectorAll('.o-mail-Thread').forEach(el => {
-                el.classList.remove('pb-5', 'pb-4', 'px-3');
-            });
         });
     },
 
