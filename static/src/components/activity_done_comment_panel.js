@@ -91,7 +91,7 @@ patch(Message.prototype, {
         // Check function done message
         this.isDoneMessage = function(body) {
             if (!body) return false;
-            const doneKeywords = ['done', 'terminée', 'selesai'];
+            const doneKeywords = ['done','terminée', 'terminé', 'selesai', '完了', '완료', '完成', 'completo', 'completa', 'fertig', 'готово', 'hoàn thành', 'tamam', 'gotowe', 'valmis', 'klaar', 'готовий', 'feito', 'fatta', 'doneer', 'zakończone', 'समाप्त', 'সমাপ্ত', 'خالص', 'ختم', 'ተጠናቀቀ', '完成了'];
             const lower = body.toLowerCase();
             return doneKeywords.some(word => lower.includes(word));
         };
