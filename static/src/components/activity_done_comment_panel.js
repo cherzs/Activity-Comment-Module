@@ -74,7 +74,6 @@ patch(Message.prototype, {
                                 thread: this.state.thread,
                             });
                         }
-                        this.state.threadRecord = threadId;
                         this._updateCommentCount();
                     }
 
@@ -133,14 +132,9 @@ patch(Message.prototype, {
     _setupMessageListener() {
         if (this.state.thread) {
             this.threadMessagesReaction = () => {
-                if (this.state.thread && this.state.thread.messages) {
-                    const validMessages = this.state.thread.messages.filter(
-                        msg => msg && msg.body && msg.body.trim() !== ''
-                    );
-                    this.state.commentCount = validMessages.length;
-                }
+                this._updateCommentCount();
             };
-            this.threadMessagesReaction(); 
+            this.threadMessagesReaction();
         }
     },
 
@@ -175,8 +169,32 @@ patch(Message.prototype, {
                 }
             }
             delete this.storeService.Message.records[`Message,${this.id}`];
+            if (this.state.thread && typeof this.state.thread._notify === 'function') {
+                this.state.thread._notify();
+            }
             return;
         }
         return await Message.__super__.edit.call(this, body, attachments, options);
     }
 });
+
+// function cleanupOrphanThreadMessages(thread, storeService) {
+//     let threadMessageIds = [];
+//     if (thread && thread.messages) {
+//         if (Array.isArray(thread.messages)) {
+//             threadMessageIds = thread.messages;
+//         } else if (thread.messages.data) {
+//             threadMessageIds = thread.messages.data;
+//         }
+//     }
+//     const validIds = threadMessageIds.filter(id => {
+//         const key = typeof id === 'string' && id.startsWith('Message,') ? id : `Message,${id}`;
+//         return !!storeService.Message.records[key];
+//     });
+//     if (Array.isArray(thread.messages)) {
+//         thread.messages = validIds;
+//     } else if (thread.messages.data) {
+//         thread.messages.data = validIds;
+//     }
+//     console.log('After cleanup:', validIds, Object.keys(storeService.Message.records));
+// }

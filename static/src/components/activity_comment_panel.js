@@ -149,14 +149,9 @@ patch(Activity.prototype, {
     _setupMessageListener() {
         if (this.state.thread) {
             this.threadMessagesReaction = () => {
-                if (this.state.thread && this.state.thread.messages) {
-                    const validMessages = this.state.thread.messages.filter(
-                        msg => msg && msg.body && msg.body.trim() !== ''
-                    );
-                    this.state.commentCount = validMessages.length;
-                }
+                this._updateCommentCount();
             };
-            this.threadMessagesReaction(); 
+            this.threadMessagesReaction();
         }
     },
 
@@ -211,6 +206,9 @@ patch(Activity.prototype, {
                 }
             }
             delete this.storeService.Message.records[`Message,${this.id}`];
+            if (this.state.thread && typeof this.state.thread._notify === 'function') {
+                this.state.thread._notify();
+            }
             return;
         }
         return await Message.__super__.edit.call(this, body, attachments, options);
