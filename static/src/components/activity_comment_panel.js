@@ -107,6 +107,9 @@ patch(Activity.prototype, {
         onMounted(() => {
             this._checkSessionStorage();
             this._setupMessageListener();
+            document.querySelectorAll('.o-mail-Thread').forEach(el => {
+                el.classList.remove('pb-5', 'pb-4', 'px-3');
+            });
         });
     },
 
