@@ -168,7 +168,10 @@ patch(Activity.prototype, {
                     msg.thread &&
                     msg.thread.id === this.state.thread.id &&
                     msg.message_type === 'comment' &&
-                    ((msg.body && msg.body.trim() !== '') || (msg.attachment_ids && msg.attachment_ids.length > 0))
+                    (
+                        (msg.body && msg.body.replace(/<[^>]+>/g, '').trim() !== '') ||
+                        (msg.attachment_ids && msg.attachment_ids.length > 0)
+                    )
             );
             this.state.commentCount = threadMessages.length;
         }
@@ -195,5 +198,21 @@ patch(Activity.prototype, {
         } catch (error) {
             console.error("Error checking session storage:", error);
         }
+    },
+
+    async edit(body, attachments = [], options = {}) {
+        if (!body || body.trim() === '' || body === '<span class="o-mail-Message-edited"></span>') {
+            await this.store.env.services.orm.unlink('mail.message', [this.id]);
+            if (this.state.thread && this.state.thread.messages) {
+                if (Array.isArray(this.state.thread.messages)) {
+                    this.state.thread.messages = this.state.thread.messages.filter(id => id !== this.id && id !== `Message,${this.id}`);
+                } else if (this.state.thread.messages.data) {
+                    this.state.thread.messages.data = this.state.thread.messages.data.filter(id => id !== this.id && id !== `Message,${this.id}`);
+                }
+            }
+            delete this.storeService.Message.records[`Message,${this.id}`];
+            return;
+        }
+        return await Message.__super__.edit.call(this, body, attachments, options);
     }
 });
