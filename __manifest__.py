@@ -17,7 +17,8 @@ Comments can be added, resolved, and managed within activities.
     'images': ['static/description/banner.png',],
     'assets': {
         'web.assets_backend': [
-            'Activity-Comment-Module/static/src/components/models.js',
+            'Activity-Comment-Module/static/src/components/activity_comment_panel.js',
+            'Activity-Comment-Module/static/src/components/activity_done_comment_panel.js',
             'Activity-Comment-Module/static/src/components/messaging_menu.js',
             'Activity-Comment-Module/static/src/components/activity.xml',
             'Activity-Comment-Module/static/src/components/message.xml',
