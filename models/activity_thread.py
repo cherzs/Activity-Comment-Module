@@ -1,4 +1,7 @@
 from odoo import models, fields, api
+import logging
+
+_logger = logging.getLogger(__name__)
 
 
 class ActivityThread(models.Model):
@@ -114,17 +117,13 @@ class ActivityThread(models.Model):
         if 'subtype_xmlid' not in kwargs and 'subtype_id' not in kwargs:
             kwargs['subtype_xmlid'] = 'mail.mt_note'
         
-        # Log for diagnostic purposes
-        _logger = self.env.ref('base.logging_backend').sudo()
-        
         try:
             # Post with context
             message = super(ActivityThread, self.with_context(context)).message_post(**kwargs)
             
             # Log successful posting
             _logger.info(
-                f"Successfully posted message to thread {self.id}, message ID: {message.id}",
-                exc_info=True
+                f"Successfully posted message to thread {self.id}, message ID: {message.id}"
             )
             
             return message
@@ -132,8 +131,7 @@ class ActivityThread(models.Model):
         except Exception as e:
             # Log failure
             _logger.error(
-                f"Failed to post message to thread {self.id}. Error: {str(e)}",
-                exc_info=True
+                f"Failed to post message to thread {self.id}. Error: {str(e)}"
             )
             # Re-raise the exception
             raise

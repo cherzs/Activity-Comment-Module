@@ -2,7 +2,7 @@
 <templates xml:space="preserve">
     <t t-name="mail.Activity.Comment" t-inherit="mail.Activity" t-inherit-mode="extension" owl="1">
         <xpath expr="//div[hasclass('o_Activity_core')]" position="inside">
-            <div class="o_activity_comment_panel_wrapper mt-2" style="width: 237%;"
+            <div class="o_activity_comment_panel_wrapper mt-2" style="width: 100%; max-width: 100%;"
                   t-att-data-activity-id="activityView.activity.id">
                 <!-- Button to toggle -->
                 <a href="#" role="button" class="o_activity_comment_btn btn btn-link text-primary p-0 mb-2 d-flex align-items-center"
@@ -20,7 +20,8 @@
                 </a>
 
                 <div t-if="activityView.activity.commentModel and activityView.activity.commentModel.showComments" 
-                     t-ref="commentPanel" class="border rounded-3 bg-view">
+                     t-ref="commentPanel" class="border rounded-3 bg-view"
+                     style="visibility: visible !important; display: block !important; position: relative !important; z-index: 1000 !important;">
      
                     <!-- Messages will be rendered by JavaScript directly -->
                     
@@ -42,7 +43,7 @@
                                     t-on-keydown="activityView.activity.commentModel.onKeydownTextarea"
                                     t-on-keyup="activityView.activity.commentModel.onKeyupTextarea"
                                     t-on-click="activityView.activity.commentModel.onClickTextarea"
-                                    oninput="console.log('Textarea input:', this.value);"></textarea>
+                                    oninput="console.log('Activity textarea input:', this.value);"></textarea>
                             
                             <!-- Bottom toolbar -->
                             <div class="d-flex justify-content-between align-items-center mt-2">
@@ -63,8 +64,7 @@
                                 <!-- Right side - send button -->
                                 <button class="btn btn-primary btn-sm"
                                         type="button"
-                                        t-on-click="activityView.activity.commentModel.submitComment"
-                                        onclick="console.log('Send button clicked!'); if(window.activitySubmitComment) window.activitySubmitComment();">
+                                        t-on-click="activityView.activity.commentModel.submitComment">
                                     SEND
                                 </button>
                             </div>

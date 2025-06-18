@@ -13,7 +13,7 @@
                           messageView.message.body.includes('To Do') ||
                           messageView.message.body.includes('marked as done')
                         ))" 
-                  class="o_activity_comment_panel_wrapper mt-2" style="width: 100%;"
+                  class="o_activity_comment_panel_wrapper mt-2 o_comment_panel_consistent" style="width: 100%;"
                   t-att-data-message-id="messageView.message.id">
                 <a href="#" role="button" class="o_activity_comment_btn btn btn-link text-primary p-0 mb-2 d-flex align-items-center"
                       t-on-click.prevent="messageView.toggleComments" 
@@ -73,8 +73,7 @@
                                 <!-- Right side - send button -->
                                 <button class="btn btn-primary btn-sm"
                                         type="button"
-                                        t-on-click="messageView.message.commentModel.submitComment"
-                                        onclick="console.log('Message Send button clicked!'); if(window.messageSubmitComment) window.messageSubmitComment();">
+                                        t-on-click="messageView.message.commentModel.submitComment">
                                     SEND
                                 </button>
                             </div>
