@@ -281,80 +281,185 @@ registerModel({
                 }
             }
         },
+        _getCurrentUserInfo() {
+            try {
+                // Prioritize env.session which is the standard in Owl components
+                if (this.env && this.env.session) {
+                    return {
+                        id: this.env.session.uid,
+                        name: this.env.session.name,
+                        partner_id: this.env.session.partner_id,
+                    };
+                }
+                // Fallback to the global odoo object
+                if (typeof odoo !== 'undefined' && odoo.session_info) {
+                    return {
+                        id: odoo.session_info.uid,
+                        name: odoo.session_info.name,
+                        partner_id: odoo.session_info.partner_id,
+                    };
+                }
+                // Last resort (should not be reached in a normal environment)
+                console.warn("Could not find user session. Using fallback.");
+                return { id: 2, name: 'Current User', partner_id: 3 };
+            } catch (error) {
+                console.error("Error getting current user info:", error);
+                return { id: 2, name: 'Current User', partner_id: 3 };
+            }
+        },
         _renderMessagesToDOM(messages) {
             try {
-                console.log("Message _renderMessagesToDOM called with", messages.length, "messages");
+                 console.log("Message _renderMessagesToDOM called with", messages.length, "messages");
                 
-                // Try multiple selectors to find comment panel
                 let commentPanel = document.querySelector(`[data-message-id="${this.message.id}"] [t-ref="commentPanel"]`);
-                
                 if (!commentPanel) {
                     commentPanel = document.querySelector(`[data-message-id="${this.message.id}"] .border.rounded-3.bg-view`);
                 }
-                
                 if (!commentPanel) {
-                    // Try to find any visible comment panel for this message
-                    const allPanels = document.querySelectorAll('.border.rounded-3.bg-view');
-                    for (let panel of allPanels) {
-                        const messageWrapper = panel.closest('[data-message-id]');
-                        if (messageWrapper && messageWrapper.getAttribute('data-message-id') == this.message.id) {
-                            commentPanel = panel;
-                            break;
-                        }
-                    }
+                    console.error("Could not find message comment panel for message:", this.message.id);
+                    return;
                 }
                 
-                console.log("Found message comment panel:", commentPanel);
+                let threadContainer = commentPanel.querySelector('.o_simple_thread');
+                if (!threadContainer) {
+                    threadContainer = document.createElement('div');
+                    threadContainer.className = 'o_simple_thread p-3 border-bottom';
+                    commentPanel.insertBefore(threadContainer, commentPanel.firstChild);
+                }
                 
-                if (commentPanel) {
-                    let threadContainer = commentPanel.querySelector('.o_simple_thread');
-                    if (!threadContainer) {
-                        threadContainer = document.createElement('div');
-                        threadContainer.className = 'o_simple_thread p-3 border-bottom';
-                        commentPanel.insertBefore(threadContainer, commentPanel.firstChild);
-                        console.log("Created new message thread container for messages");
-                    }
+                threadContainer.innerHTML = ''; // Clear existing
+                const currentUser = this._getCurrentUserInfo();
+
+                messages.forEach(msg => {
+                    const authorName = msg.author_id ? msg.author_id[1] : 'Unknown User';
+                    const authorPartnerId = msg.author_id ? msg.author_id[0] : null;
+                    const messageDate = new Date(msg.date).toLocaleString();
+                    const messageBody = msg.body || 'No content';
+                    const avatarSrc = `/web/image/res.partner/${authorPartnerId}/avatar_128`;
+
+                    const isCurrentUser = currentUser && authorPartnerId === currentUser.partner_id;
                     
-                    // Clear existing messages
-                    threadContainer.innerHTML = '';
+                    const actionsHtml = isCurrentUser ? `
+                        <div class="o_comment_actions ms-auto">
+                            <a href="#" class="o_comment_edit_btn me-2" title="Edit" data-message-id="${msg.id}"><i class="fa fa-pencil"></i></a>
+                            <a href="#" class="o_comment_delete_btn" title="Delete" data-message-id="${msg.id}"><i class="fa fa-trash"></i></a>
+                        </div>
+                    ` : '';
                     
-                    // Add each message
-                    messages.forEach(msg => {
-                        const authorName = msg.author_id && msg.author_id[1] ? msg.author_id[1] : 'Unknown User';
-                        const messageDate = new Date(msg.date).toLocaleString();
-                        const messageBody = msg.body || 'No content';
-                        
-                        const messageHtml = `
-                            <div class="o_simple_message d-flex mb-3">
-                                <img class="me-2 rounded-circle" src="/web/image?model=res.users&field=avatar_128&id=${msg.author_id ? msg.author_id[0] : 2}" 
-                                     alt="Avatar" style="width: 32px; height: 32px;"/>
-                                <div class="flex-grow-1">
-                                    <div class="d-flex align-items-center mb-1">
-                                        <strong class="text-dark">${authorName}</strong>
-                                        <small class="text-muted ms-2">${messageDate}</small>
-                                    </div>
-                                    <div class="text-dark">${messageBody}</div>
+                    const messageHtml = `
+                        <div class="o_simple_message d-flex mb-3" data-message-id="${msg.id}">
+                            <img class="me-2 rounded-circle" src="${avatarSrc}" alt="Avatar" style="width: 32px; height: 32px;"/>
+                            <div class="flex-grow-1">
+                                <div class="d-flex align-items-center mb-1">
+                                    <strong class="text-dark">${authorName}</strong>
+                                    <small class="text-muted ms-2">${messageDate}</small>
+                                    ${actionsHtml}
+                                </div>
+                                <div class="o_comment_content text-dark">${messageBody}</div>
+                                <div class="o_comment_edit_form" style="display: none;">
+                                     <textarea class="form-control mb-2" style="min-height: 60px;">${messageBody}</textarea>
+                                     <button class="btn btn-primary btn-sm o_comment_save_btn">Save</button>
+                                     <button class="btn btn-secondary btn-sm o_comment_cancel_btn ms-1">Cancel</button>
                                 </div>
                             </div>
-                        `;
-                        threadContainer.insertAdjacentHTML('beforeend', messageHtml);
-                    });
-                    
-                    console.log("Successfully added", messages.length, "messages to message thread container");
-                    
-                    // Immediate scroll to bottom
-                    commentPanel.scrollTop = commentPanel.scrollHeight;
-                    
-                } else {
-                    console.error("Could not find message comment panel for message:", this.message.id);
-                    // Quick retry
-                    setTimeout(() => {
-                        console.log("Quick retry to render message comments...");
-                        this._renderMessagesToDOM(messages);
-                    }, 100);
-                }
+                        </div>
+                    `;
+                    threadContainer.insertAdjacentHTML('beforeend', messageHtml);
+                });
+
+                this._attachActionListeners(threadContainer);
+                commentPanel.scrollTop = commentPanel.scrollHeight;
+
             } catch (error) {
                 console.error("Error rendering message comments to DOM:", error);
+            }
+        },
+        _attachActionListeners(container) {
+            container.addEventListener('click', (ev) => {
+                const target = ev.target;
+                const editBtn = target.closest('.o_comment_edit_btn');
+                const deleteBtn = target.closest('.o_comment_delete_btn');
+                const saveBtn = target.closest('.o_comment_save_btn');
+                const cancelBtn = target.closest('.o_comment_cancel_btn');
+
+                if (editBtn) {
+                    ev.preventDefault();
+                    const messageId = editBtn.dataset.messageId;
+                    this._startEdit(messageId);
+                } else if (deleteBtn) {
+                    ev.preventDefault();
+                    const messageId = deleteBtn.dataset.messageId;
+                    this.deleteComment(messageId);
+                } else if (saveBtn) {
+                     ev.preventDefault();
+                    const messageId = saveBtn.closest('.o_simple_message').dataset.messageId;
+                    this._saveEdit(messageId);
+                } else if (cancelBtn) {
+                    ev.preventDefault();
+                    const messageId = cancelBtn.closest('.o_simple_message').dataset.messageId;
+                    this._cancelEdit(messageId);
+                }
+            });
+        },
+
+        _startEdit(messageId) {
+            const msgElement = document.querySelector(`.o_simple_message[data-message-id="${messageId}"]`);
+            if (msgElement) {
+                msgElement.querySelector('.o_comment_content').style.display = 'none';
+                msgElement.querySelector('.o_comment_actions').style.display = 'none';
+                msgElement.querySelector('.o_comment_edit_form').style.display = 'block';
+            }
+        },
+
+        _cancelEdit(messageId) {
+            const msgElement = document.querySelector(`.o_simple_message[data-message-id="${messageId}"]`);
+            if (msgElement) {
+                msgElement.querySelector('.o_comment_content').style.display = 'block';
+                msgElement.querySelector('.o_comment_actions').style.display = 'flex';
+                msgElement.querySelector('.o_comment_edit_form').style.display = 'none';
+            }
+        },
+        
+        async _saveEdit(messageId) {
+            const msgElement = document.querySelector(`.o_simple_message[data-message-id="${messageId}"]`);
+            const textarea = msgElement.querySelector('.o_comment_edit_form textarea');
+            const newBody = textarea.value.trim();
+
+            if (!newBody) {
+                alert("Comment cannot be empty.");
+                return;
+            }
+
+            try {
+                const rpc = this.messaging.rpc || this.env.services.rpc;
+                await rpc({
+                    model: 'mail.message',
+                    method: 'write',
+                    args: [[parseInt(messageId)], { body: newBody }],
+                });
+                await this._loadThreadMessages(this.thread.id);
+            } catch (error) {
+                console.error("Error saving edited comment:", error);
+                alert("Failed to save comment. See console for details.");
+            }
+        },
+
+        async deleteComment(messageId) {
+            if (!confirm("Are you sure you want to delete this comment?")) {
+                return;
+            }
+
+            try {
+                const rpc = this.messaging.rpc || this.env.services.rpc;
+                await rpc({
+                    model: 'mail.message',
+                    method: 'unlink',
+                    args: [[parseInt(messageId)]],
+                });
+                await this._loadThreadMessages(this.thread.id);
+            } catch (error) {
+                console.error("Error deleting comment:", error);
+                alert("Failed to delete comment. See console for details.");
             }
         },
         getToggleText() {
@@ -578,6 +683,7 @@ registerModel({
                         
                         // Use thread's message_post to save to database
                         const rpc = this.messaging.rpc || this.env.services.rpc;
+                        const currentUser = this._getCurrentUserInfo();
                         const messageData = await rpc({
                             model: 'mail.activity.thread',
                             method: 'message_post',
@@ -585,7 +691,8 @@ registerModel({
                             kwargs: {
                                 body: commentText,
                                 message_type: 'comment',
-                                subtype_xmlid: 'mail.mt_note'
+                                subtype_xmlid: 'mail.mt_note',
+                                author_id: currentUser.partner_id
                             }
                         });
                         
@@ -896,4 +1003,4 @@ registerPatch({
         },
 
     },
-}); 
+});

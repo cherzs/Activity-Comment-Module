@@ -32,17 +32,12 @@
                 <div t-if="messageView.message.commentModel and messageView.message.commentModel.showComments" 
                      t-ref="commentPanel" class="border rounded-3 bg-view"
                      style="visibility: visible !important; display: block !important; position: relative !important; z-index: 1000 !important;">
-                    <!-- Messages will be rendered by JavaScript directly -->
-                    
-                    <!-- Native Odoo Log note style input -->
                     <div t-if="messageView.message.commentModel.needsComposer" 
                          class="d-flex p-3">
-                        <!-- Avatar -->
                         <img class="me-2 rounded-circle" 
-                             src="/web/image?model=res.users&amp;field=avatar_128&amp;id=2" 
+                             t-att-src="'/web/image?model=res.users&amp;field=avatar_128&amp;id=' + (env.session ? env.session.uid : 2)" 
                              alt="Avatar" style="width: 40px; height: 40px;"/>
                         
-                        <!-- Input area -->
                         <div class="flex-grow-1">
                             <textarea class="form-control" 
                                     style="min-height: 80px; resize: vertical;"
@@ -54,9 +49,7 @@
                                     t-on-click="messageView.message.commentModel.onClickTextarea"
                                     oninput="console.log('Message textarea input:', this.value);"></textarea>
                             
-                            <!-- Bottom toolbar -->
                             <div class="d-flex justify-content-between align-items-center mt-2">
-                                <!-- Left side - tool buttons -->
                                 <div class="d-flex">
                                     <button class="btn btn-light btn-sm me-1" type="button"
                                             title="Emojis" aria-label="Emojis"
@@ -70,7 +63,6 @@
                                     </button>
                                 </div>
                                 
-                                <!-- Right side - send button -->
                                 <button class="btn btn-primary btn-sm"
                                         type="button"
                                         t-on-click="messageView.message.commentModel.submitComment">

@@ -26,6 +26,43 @@ window.forceUIUpdate = function() {
     }
 };
 
+// Global function to clear all cached data and force reload
+window.clearCommentCache = function() {
+    try {
+        console.log("Clearing all comment cache data...");
+        
+        // Clear localStorage
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && (key.startsWith('activity_comments_') || 
+                       key.startsWith('activity_thread_') || 
+                       key.startsWith('message_comments_') || 
+                       key.startsWith('message_thread_'))) {
+                keysToRemove.push(key);
+            }
+        }
+        
+        keysToRemove.forEach(key => {
+            localStorage.removeItem(key);
+            console.log("Removed cached data:", key);
+        });
+        
+        // Clear sessionStorage
+        sessionStorage.removeItem('open_activity_comments');
+        
+        console.log("Cache cleared! Reloading page to refresh data...");
+        
+        // Force page reload to get fresh data
+        setTimeout(() => {
+            window.location.reload();
+        }, 1000);
+        
+    } catch (error) {
+        console.error("Error clearing cache:", error);
+    }
+};
+
 // Global function to create models and load comment counts silently
 window.loadAllCommentCounts = function() {
     console.log("Loading comment counts silently without UI interaction...");
@@ -104,7 +141,7 @@ window.loadAllCommentCounts = function() {
                                 } else if (message && message.commentModel) {
                                     console.log("Loading count for existing message:", messageId);
                                     message.commentModel._loadCommentCountFromDatabase();
-                                }
+                                 }
                             }
                         }
                     } catch (error) {
@@ -119,9 +156,45 @@ window.loadAllCommentCounts = function() {
     }
 };
 
+// Debug function to show current user info
+window.debugUserInfo = function() {
+    console.log("=== DEBUG USER INFO ===");
+    
+    // Check all possible sources
+    if (typeof odoo !== 'undefined' && odoo.session_info) {
+        console.log("odoo.session_info:", odoo.session_info);
+    }
+    
+    if (typeof window !== 'undefined' && window.odoo && window.odoo.session) {
+        console.log("window.odoo.session:", window.odoo.session);
+    }
+    
+    // Check env from messaging
+    try {
+        if (typeof odoo !== 'undefined' && odoo.__DEBUG__ && odoo.__DEBUG__.services) {
+            const messaging = odoo.__DEBUG__.services['@mail/model/model_manager'].messaging;
+            if (messaging && messaging.env) {
+                console.log("messaging.env.session:", messaging.env.session);
+            }
+            if (messaging && messaging.currentUser) {
+                console.log("messaging.currentUser:", messaging.currentUser);
+            }
+        }
+    } catch (e) {
+        console.log("Could not access messaging env:", e);
+    }
+    
+    console.log("=== END DEBUG ===");
+};
+
 // Auto-load all counts after page is ready
 document.addEventListener('DOMContentLoaded', function() {
     console.log("DOM loaded, starting comment count loading sequence...");
+    
+    // Debug user info first
+    setTimeout(() => {
+        window.debugUserInfo();
+    }, 1000);
     
     // Try only once after elements are loaded
     setTimeout(() => {
@@ -432,83 +505,190 @@ registerModel({
                 }
             }
         },
+        _getCurrentUserInfo() {
+            try {
+                // Prioritize env.session which is the standard in Owl components
+                if (this.env && this.env.session) {
+                    return {
+                        id: this.env.session.uid,
+                        name: this.env.session.name,
+                        partner_id: this.env.session.partner_id,
+                    };
+                }
+                // Fallback to the global odoo object
+                if (typeof odoo !== 'undefined' && odoo.session_info) {
+                    return {
+                        id: odoo.session_info.uid,
+                        name: odoo.session_info.name,
+                        partner_id: odoo.session_info.partner_id,
+                    };
+                }
+                // Last resort (should not be reached in a normal environment)
+                console.warn("Could not find user session. Using fallback.");
+                return { id: 2, name: 'Current User', partner_id: 3 };
+            } catch (error) {
+                console.error("Error getting current user info:", error);
+                return { id: 2, name: 'Current User', partner_id: 3 };
+            }
+        },
         _renderMessagesToDOM(messages) {
             try {
                 console.log("_renderMessagesToDOM called with", messages.length, "messages");
                 
-                // Try multiple selectors to find comment panel
                 let commentPanel = document.querySelector(`[data-activity-id="${this.activity.id}"] [t-ref="commentPanel"]`);
-                
                 if (!commentPanel) {
                     commentPanel = document.querySelector(`[data-activity-id="${this.activity.id}"] .border.rounded-3.bg-view`);
                 }
-                
                 if (!commentPanel) {
-                    // Try to find any visible comment panel for this activity
-                    const allPanels = document.querySelectorAll('.border.rounded-3.bg-view');
-                    for (let panel of allPanels) {
-                        const activityWrapper = panel.closest('[data-activity-id]');
-                        if (activityWrapper && activityWrapper.getAttribute('data-activity-id') == this.activity.id) {
-                            commentPanel = panel;
-                            break;
-                        }
-                    }
+                     console.error("Could not find comment panel for activity:", this.activity.id);
+                    return;
+                }
+
+                let threadContainer = commentPanel.querySelector('.o_simple_thread');
+                if (!threadContainer) {
+                    threadContainer = document.createElement('div');
+                    threadContainer.className = 'o_simple_thread p-3 border-bottom';
+                    commentPanel.insertBefore(threadContainer, commentPanel.firstChild);
                 }
                 
-                console.log("Found comment panel:", commentPanel);
-                
-                if (commentPanel) {
-                    let threadContainer = commentPanel.querySelector('.o_simple_thread');
-                    if (!threadContainer) {
-                        threadContainer = document.createElement('div');
-                        threadContainer.className = 'o_simple_thread p-3 border-bottom';
-                        commentPanel.insertBefore(threadContainer, commentPanel.firstChild);
-                        console.log("Created new thread container for messages");
-                    }
+                threadContainer.innerHTML = ''; // Clear existing messages
+                const currentUser = this._getCurrentUserInfo();
+
+                messages.forEach(msg => {
+                    const authorName = msg.author_id ? msg.author_id[1] : 'Unknown User';
+                    const authorPartnerId = msg.author_id ? msg.author_id[0] : null;
+                    const messageDate = new Date(msg.date).toLocaleString();
+                    const messageBody = msg.body || 'No content';
+                    const avatarSrc = `/web/image/res.partner/${authorPartnerId}/avatar_128`;
                     
-                    // Clear existing messages
-                    threadContainer.innerHTML = '';
-                    
-                    // Add each message
-                    messages.forEach(msg => {
-                        const authorName = msg.author_id && msg.author_id[1] ? msg.author_id[1] : 'Unknown User';
-                        const messageDate = new Date(msg.date).toLocaleString();
-                        const messageBody = msg.body || 'No content';
-                        
-                        const messageHtml = `
-                            <div class="o_simple_message d-flex mb-3">
-                                <img class="me-2 rounded-circle" src="/web/image?model=res.users&field=avatar_128&id=${msg.author_id ? msg.author_id[0] : 2}" 
-                                     alt="Avatar" style="width: 32px; height: 32px;"/>
-                                <div class="flex-grow-1">
-                                    <div class="d-flex align-items-center mb-1">
-                                        <strong class="text-dark">${authorName}</strong>
-                                        <small class="text-muted ms-2">${messageDate}</small>
-                                    </div>
-                                    <div class="text-dark">${messageBody}</div>
+                    const isCurrentUser = currentUser && authorPartnerId === currentUser.partner_id;
+
+                    // Action buttons (Edit/Delete)
+                    const actionsHtml = isCurrentUser ? `
+                        <div class="o_comment_actions ms-auto">
+                            <a href="#" class="o_comment_edit_btn me-2" title="Edit" data-message-id="${msg.id}"><i class="fa fa-pencil"></i></a>
+                            <a href="#" class="o_comment_delete_btn" title="Delete" data-message-id="${msg.id}"><i class="fa fa-trash"></i></a>
+                        </div>
+                    ` : '';
+
+                    const messageHtml = `
+                        <div class="o_simple_message d-flex mb-3" data-message-id="${msg.id}">
+                            <img class="me-2 rounded-circle" src="${avatarSrc}" alt="Avatar" style="width: 32px; height: 32px;"/>
+                            <div class="flex-grow-1">
+                                <div class="d-flex align-items-center mb-1">
+                                    <strong class="text-dark">${authorName}</strong>
+                                    <small class="text-muted ms-2">${messageDate}</small>
+                                    ${actionsHtml}
+                                </div>
+                                <div class="o_comment_content text-dark">${messageBody}</div>
+                                <div class="o_comment_edit_form" style="display: none;">
+                                     <textarea class="form-control mb-2" style="min-height: 60px;">${messageBody}</textarea>
+                                     <button class="btn btn-primary btn-sm o_comment_save_btn">Save</button>
+                                     <button class="btn btn-secondary btn-sm o_comment_cancel_btn ms-1">Cancel</button>
                                 </div>
                             </div>
-                        `;
-                        threadContainer.insertAdjacentHTML('beforeend', messageHtml);
-                    });
-                    
-                    console.log("Successfully added", messages.length, "messages to thread container");
-                    
-                    // Immediate scroll to bottom
-                    commentPanel.scrollTop = commentPanel.scrollHeight;
-                    
-                } else {
-                    console.error("Could not find comment panel for activity:", this.activity.id);
-                    // Quick retry
-                    setTimeout(() => {
-                        console.log("Quick retry to render messages...");
-                        this._renderMessagesToDOM(messages);
-                    }, 100);
-                }
+                        </div>
+                    `;
+                    threadContainer.insertAdjacentHTML('beforeend', messageHtml);
+                });
+                
+                this._attachActionListeners(threadContainer);
+                commentPanel.scrollTop = commentPanel.scrollHeight;
+
             } catch (error) {
                 console.error("Error rendering messages to DOM:", error);
             }
         },
+        _attachActionListeners(container) {
+            container.addEventListener('click', (ev) => {
+                const target = ev.target;
+                const editBtn = target.closest('.o_comment_edit_btn');
+                const deleteBtn = target.closest('.o_comment_delete_btn');
+                const saveBtn = target.closest('.o_comment_save_btn');
+                const cancelBtn = target.closest('.o_comment_cancel_btn');
 
+                if (editBtn) {
+                    ev.preventDefault();
+                    const messageId = editBtn.dataset.messageId;
+                    this._startEdit(messageId);
+                } else if (deleteBtn) {
+                    ev.preventDefault();
+                    const messageId = deleteBtn.dataset.messageId;
+                    this.deleteComment(messageId);
+                } else if (saveBtn) {
+                     ev.preventDefault();
+                    const messageId = saveBtn.closest('.o_simple_message').dataset.messageId;
+                    this._saveEdit(messageId);
+                } else if (cancelBtn) {
+                    ev.preventDefault();
+                    const messageId = cancelBtn.closest('.o_simple_message').dataset.messageId;
+                    this._cancelEdit(messageId);
+                }
+            });
+        },
+
+        _startEdit(messageId) {
+            const msgElement = document.querySelector(`.o_simple_message[data-message-id="${messageId}"]`);
+            if (msgElement) {
+                msgElement.querySelector('.o_comment_content').style.display = 'none';
+                msgElement.querySelector('.o_comment_actions').style.display = 'none';
+                msgElement.querySelector('.o_comment_edit_form').style.display = 'block';
+            }
+        },
+
+        _cancelEdit(messageId) {
+            const msgElement = document.querySelector(`.o_simple_message[data-message-id="${messageId}"]`);
+            if (msgElement) {
+                msgElement.querySelector('.o_comment_content').style.display = 'block';
+                msgElement.querySelector('.o_comment_actions').style.display = 'flex';
+                msgElement.querySelector('.o_comment_edit_form').style.display = 'none';
+            }
+        },
+        
+        async _saveEdit(messageId) {
+            const msgElement = document.querySelector(`.o_simple_message[data-message-id="${messageId}"]`);
+            const textarea = msgElement.querySelector('.o_comment_edit_form textarea');
+            const newBody = textarea.value.trim();
+
+            if (!newBody) {
+                alert("Comment cannot be empty.");
+                return;
+            }
+
+            try {
+                const rpc = this.messaging.rpc || this.env.services.rpc;
+                await rpc({
+                    model: 'mail.message',
+                    method: 'write',
+                    args: [[parseInt(messageId)], { body: newBody }],
+                });
+                // Reload comments to show the change
+                await this._loadThreadMessages(this.thread.id);
+            } catch (error) {
+                console.error("Error saving edited comment:", error);
+                alert("Failed to save comment. See console for details.");
+            }
+        },
+
+        async deleteComment(messageId) {
+            if (!confirm("Are you sure you want to delete this comment?")) {
+                return;
+            }
+
+            try {
+                const rpc = this.messaging.rpc || this.env.services.rpc;
+                await rpc({
+                    model: 'mail.message',
+                    method: 'unlink',
+                    args: [[parseInt(messageId)]],
+                });
+                // Reload comments to reflect the deletion
+                await this._loadThreadMessages(this.thread.id);
+            } catch (error) {
+                console.error("Error deleting comment:", error);
+                alert("Failed to delete comment. See console for details.");
+            }
+        },
         getToggleText() {
             try {
                 console.log("getToggleText called - showComments:", this.showComments, "commentCount:", this.commentCount);
@@ -845,6 +1025,7 @@ registerModel({
                         
                         // Use thread's message_post to save to database
                         const rpc = this.messaging.rpc || this.env.services.rpc;
+                        const currentUser = this._getCurrentUserInfo();
                         const messageData = await rpc({
                             model: 'mail.activity.thread',
                             method: 'message_post',
@@ -852,7 +1033,8 @@ registerModel({
                             kwargs: {
                                 body: commentText,
                                 message_type: 'comment',
-                                subtype_xmlid: 'mail.mt_note'
+                                subtype_xmlid: 'mail.mt_note',
+                                author_id: currentUser.partner_id
                             }
                         });
                         
@@ -1016,4 +1198,4 @@ registerPatch({
         },
 
     },
-}); 
+});
